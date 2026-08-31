@@ -6,7 +6,9 @@ export type AtmosphereAudio = {
   destroy: () => void;
 };
 
-const MASTER_LEVEL = 1.1;
+// Pulled from 1.1 to 0.78 (~-3 dB) by operator call — the score is ambience
+// behind reading, not a listening session. Surface lands ≈ -13 dBFS RMS.
+const MASTER_LEVEL = 0.78;
 const FADE_IN_S = 1.2;
 const FADE_OUT_S = 0.6;
 
@@ -256,8 +258,8 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     depthTrim.gain.value = 1;
     const master = context.createGain();
     master.gain.value = 0;
-    // MASTER_LEVEL sits above unity, so stacked chord + gust + pluck peaks
-    // could clip the destination; the limiter shaves only those rare peaks.
+    // Stacked chord + gust + pluck + drum peaks can still spike well above
+    // the average level; the limiter shaves only those rare peaks.
     const limiter = context.createDynamicsCompressor();
     limiter.threshold.value = -4;
     limiter.knee.value = 3;
@@ -627,11 +629,16 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     const drumLevel = deepLevel * Math.min(1, abyss / DRUM_FADE_ABYSS);
     if (drumLevel <= 0.01) return;
     const levelMult = drumLevel / DEEP_LEVEL;
+    // Hits are clamped to the context clock: the drum cursor starts at the
+    // context's birth (t ≈ 0), and negative jitter/swing on the first window
+    // would otherwise produce t < 0 — setValueAtTime THROWS on negative time
+    // (a visitor who reloads while submerged and then clicks trips this).
+    const floor = g.context.currentTime + 0.001;
     const swung = index % 2 === 1 ? when + DRUM_SWING_S : when;
 
     const kickVel = KICK_STEPS[index];
     if (kickVel !== undefined) {
-      const hit = swung + (Math.random() * 0.024 - 0.012);
+      const hit = Math.max(floor, swung + (Math.random() * 0.024 - 0.012));
       const peak = DRUM_KICK_PEAK * kickVel * levelMult * (0.85 + Math.random() * 0.3);
       const osc = g.context.createOscillator();
       osc.type = "sine";
@@ -653,7 +660,7 @@ export function createAtmosphereAudio(): AtmosphereAudio {
 
     const snareVel = SNARE_STEPS[index];
     if (snareVel !== undefined) {
-      const hit = swung + (Math.random() * 0.02 - 0.01);
+      const hit = Math.max(floor, swung + (Math.random() * 0.02 - 0.01));
       const vel = snareVel * levelMult * (0.88 + Math.random() * 0.24);
       const noise = g.context.createBufferSource();
       noise.buffer = g.whiteBuffer;
@@ -680,7 +687,7 @@ export function createAtmosphereAudio(): AtmosphereAudio {
 
     // Hats tick every eighth: dusty bandpassed clicks, upbeats softer.
     {
-      const hit = swung + (Math.random() * 0.012 - 0.006);
+      const hit = Math.max(floor, swung + (Math.random() * 0.012 - 0.006));
       const accent = index % 2 === 0 ? 1 : 0.65;
       const peak = DRUM_HAT_PEAK * accent * levelMult * (0.75 + Math.random() * 0.5);
       const noise = g.context.createBufferSource();
