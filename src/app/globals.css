@@ -52,13 +52,16 @@
 }
 
 /* Overscroll rubber-band shows the document background; match the abyss floor
-   so both ends of the scroll read as part of the scene. */
+   so both ends of the scroll read as part of the scene. Painting html stops
+   body's background from propagating to the root, and an opaque body background
+   would then cover the fixed -z-10 scene canvas (negative-z children paint
+   below in-flow backgrounds) — so body stays transparent and the base coat
+   lives on the canvas element itself. */
 html {
   background-color: #02050b;
 }
 
 body {
-  background: var(--background);
   color: var(--foreground);
 }
 

@@ -95,7 +95,7 @@ export default function Atmosphere() {
 
   return (
     <>
-      <canvas ref={canvasRef} aria-hidden className="fixed inset-0 -z-10 h-full w-full" />
+      <canvas ref={canvasRef} aria-hidden className="fixed inset-0 -z-10 h-full w-full bg-background" />
       <div className="fixed bottom-5 right-5 z-40 flex gap-2">
         <button
           type="button"

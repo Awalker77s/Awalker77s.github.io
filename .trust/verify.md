@@ -29,7 +29,7 @@ Screenshots with the page identity visible (nav name + section content); console
 
 ## Gotchas
 - prefers-reduced-motion: emulate with a Playwright context `{ reducedMotion: "reduce" }` (pane tools can't; the rain toggle drives the same static-frame path interactively).
-- Headless CDP screenshots omit the accelerated canvas layer — even under swiftshader, where the engine provably paints. Capture the scene via in-page `canvas.toDataURL("image/png")` → decode base64 to a PNG file; DOM screenshots stay valid for text/layout evidence. PNG encode is deterministic, so byte-equality doubles as a frozen-frame check.
+- Plain `page.screenshot()` captures the canvas fine (an earlier note here claimed CDP omits the accelerated layer — misdiagnosis; the real cause was an opaque body background covering the `-z-10` canvas). Because `html` carries a background for overscroll match, body backgrounds do not propagate to the root — body must stay transparent (base coat lives on the canvas element, see globals.css). A flat scene-less hero screenshot means that stacking regressed, not that capture failed. In-page `canvas.toDataURL("image/png")` still works to read the engine raster directly; its PNG encode is deterministic, so byte-equality doubles as a frozen-frame check.
 - Synthetic pane clicks count as trusted user gestures in Chrome, so the autoplay gate does open for them.
 - Injected patches (AudioContext/BiquadFilter wrappers, scrollBehavior override) die on any page reload — re-apply before the next gesture/scroll.
 - Prefer `element.click()` via javascript_tool for the toggles: pane left_click can fire multiple event pairs, and the JS click still counts as a trusted gesture.
