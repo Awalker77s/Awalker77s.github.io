@@ -80,6 +80,19 @@ body {
   outline-offset: 2px;
 }
 
+/* The scene canvas is sized to the LARGE viewport, not the dynamic one: on
+   phones the URL-bar collapse/expand otherwise changes the canvas rect on
+   every scroll direction change, and the engine's resize path rebuilds the
+   water (waterline + camera math shift, ripple state wiped) — seen live as a
+   mid-scroll water glitch. With 100lvh the rect never moves while scrolling;
+   the strip hidden behind the toolbar is just offscreen background. The 100vh
+   line is the fallback (desktop identical; iOS's classic 100vh already means
+   the large viewport). */
+.scene-canvas {
+  height: 100vh;
+  height: 100lvh;
+}
+
 /* Phones: backdrop-filter over the always-animating fixed canvas forces the
    compositor to re-blur the whole layer stack every frame — on real mobile
    Safari/Chrome that reads as scroll jank and white tile flashes. The blur is

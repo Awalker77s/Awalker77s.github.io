@@ -1080,18 +1080,21 @@ export function createRainEngine(
 
   // Camera model: the first ~0.9 viewport of scroll dips the eye below the
   // surface; the rest of the page maps to depth 0 -> 1 (abyss at the footer).
-  // No easing here — wheel smoothing already lives in src/lib/scroll.ts, and a
-  // second stage in series would make the water lag the text it scrolls with.
+  // No easing here of ANY kind — wheel smoothing already lives in
+  // src/lib/scroll.ts, and the mapping must stay LINEAR in scrollY: the total
+  // camera travel (~0.88·h + 26px) over 0.9·h of scroll is ~1:1 with the page,
+  // so the surface rides with the text. A smoothstep here (tried) makes the
+  // water sit still near the top while the text moves, then outrun it 1.5×
+  // mid-dip — the "doesn't flow with the words" complaint.
   function updateDepth() {
     const submergeRange = Math.max(height * 0.9, 1);
     submerge = clamp01(scrollYCached / submergeRange);
     depth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
-    const eased = submerge * submerge * (3 - 2 * submerge);
     // Margin covers physics chop + the additive swell so no crest peeks back
     // into frame at full submerge. Scale-invariant: max swell amplitude is
     // 0.12 of the water band, which grows with viewport height (a fixed
     // margin was mathematically exceeded above ~1310px-tall viewports).
-    cameraY = eased * (waterRest + MAX_WAVE_HEIGHT + height * WATER_FRACTION * 0.12 + 8);
+    cameraY = submerge * (waterRest + MAX_WAVE_HEIGHT + height * WATER_FRACTION * 0.12 + 8);
     if (onDepth) {
       const combined = clamp01(submerge * 0.4 + depth * 0.6);
       if (lastEmittedDepth < 0 || Math.abs(combined - lastEmittedDepth) > 0.003) {

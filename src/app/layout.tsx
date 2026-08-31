@@ -17,6 +17,25 @@ export const metadata: Metadata = {
   title: "Alexander Walker — AI Automation & Multi-Agent Systems",
   description:
     "Applied AI student at UT Knoxville. I design multi-agent systems, LLM pipelines, and full-stack products — and ship them to real users.",
+  // Link previews: without an explicit og:image, scrapers fall back to the
+  // first large <img> they find (a project screenshot). og.jpg is a capture of
+  // the hero — JPEG, not webp, because several scrapers still skip webp.
+  openGraph: {
+    title: "Alexander Walker — AI Automation & Multi-Agent Systems",
+    description:
+      "Applied AI student at UT Knoxville. I design multi-agent systems, LLM pipelines, and full-stack products — and ship them to real users.",
+    url: "/",
+    siteName: "Alexander Walker",
+    type: "website",
+    images: [{ url: "/og.jpg", width: 2400, height: 1260, alt: "Alexander Walker — portfolio hero over a rainy neon skyline" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Alexander Walker — AI Automation & Multi-Agent Systems",
+    description:
+      "Applied AI student at UT Knoxville. I design multi-agent systems, LLM pipelines, and full-stack products — and ship them to real users.",
+    images: ["/og.jpg"],
+  },
 };
 
 export const viewport: Viewport = {
