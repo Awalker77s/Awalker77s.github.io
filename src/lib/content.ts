@@ -277,7 +277,7 @@ export const blimpSkills = [
 ];
 
 export const about = [
-  "I'm an Applied AI student at UT Knoxville, after completing the computer science core at UCF. Most of my time goes into building with AI agents — multi-agent systems, orchestration, and the trust layers that make their output safe to ship. Everything on this page is a real build: live users, a real paying client, real captured footage, real test suites.",
-  "The thread through all of it is verification. \"The demo worked\" doesn't convince me — I want evals with blinded graders, guardrails that fail closed, evidence ledgers that can't be faked, and honest numbers even when they're unflattering. The gap between what a model can do and what a business will actually deploy is exactly the gap those things close.",
-  "This site is part of the portfolio too. The rain, the city, and the water are a custom canvas engine — a spring-column water surface with real ripple physics — and the soundtrack is synthesized live in the Web Audio API: a bright bed at the surface that crossfades into a swung lofi beat under warm pads once you dive, with a synthesized splash at the waterline. No animation libraries, no audio files.",
+  "I'm Alex. I'm studying Applied AI at UT Knoxville after doing my computer science core at UCF, and most of what I know comes from shipping things — a learning platform with real users, a website for a food-truck business in Jacksonville, an identification tool built with a paleontologist who knows more about sea urchins than I ever will.",
+  "The thing I care about most is proof. Anyone can make an AI demo look good — I want to show it works: test suites, honest numbers even when they're unflattering, receipts for every action an agent takes. That's the kind of engineer I'm trying to be.",
+  "This site is one of those builds too. The rain, the city, and the water are a canvas engine I wrote from scratch, and the music is synthesized live in your browser as you listen. Scroll down and the whole page goes underwater — that part's just because I liked it.",
 ];

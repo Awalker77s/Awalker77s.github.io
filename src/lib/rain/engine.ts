@@ -65,9 +65,13 @@ const SHORE_FRACTION = 0.035;
 // re-tuned to the indigo silhouettes the cyberpunk pass calls for.
 const CITY_BANDS = [
   { heightFrac: 0.3, fill: "#0d1830", widthMin: 24, widthMax: 56, gapMin: 2, gapMax: 8, heightPow: 4 },
-  { heightFrac: 0.22, fill: "#131c33", widthMin: 18, widthMax: 44, gapMin: 2, gapMax: 12, heightPow: 5 },
-  { heightFrac: 0.15, fill: "#1b2947", widthMin: 30, widthMax: 80, gapMin: 10, gapMax: 26, heightPow: 6 },
+  { heightFrac: 0.25, fill: "#131c33", widthMin: 18, widthMax: 44, gapMin: 2, gapMax: 12, heightPow: 5 },
+  { heightFrac: 0.17, fill: "#1b2947", widthMin: 30, widthMax: 80, gapMin: 10, gapMax: 26, heightPow: 6 },
 ];
+// Hero megatower fill: the near indigo shifted toward the haze violet — the
+// material-contrast cue (Arasaka reads via material, not just height) without
+// adding a fifth hue. See docs/research/cyberpunk-skyline/findings.md.
+const HERO_FILL = "#241e3f";
 const MID_CELL_W = 3;
 const MID_CELL_H = 4;
 const NEAR_CELL_W = 4;
@@ -196,7 +200,6 @@ export function createRainEngine(
   // sky from cutting hard from skyline to flat black.
   let cityGlowViolet: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
   let cityGlowCyan: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
-  let spire: { x: number; topY: number; tipY: number } | null = null;
   let fogSprite: HTMLCanvasElement | null = null;
 
   const drops: Drop[] = [];
@@ -217,7 +220,7 @@ export function createRainEngine(
   const glintXs: number[] = [];
   // Colored light sources whose glow lies on the water as shimmering streaks —
   // baked positions (billboards, promenade lamps); live sources (hero signs,
-  // beacons, spire tip) are read from their own arrays at draw time.
+  // beacons incl. the megatower crown) are read from their own arrays at draw time.
   const waterLights: { x: number; rgb: string; strength: number; phase: number }[] = [];
   const cars: Car[] = [];
   const flakes: Flake[] = [];
@@ -366,21 +369,17 @@ export function createRainEngine(
       // Height-only change (a phone's browser chrome collapsing mid-scroll):
       // the band sprites are bottom-anchored, so drawCityBands slides them to
       // the new groundY — but the live overlays (hero signs, beacons, mutable
-      // windows, the spire) were baked with absolute scene-space y. They must
-      // slide the same distance or they detach and float in the sky (seen on
-      // a real phone 2026-08-31: an orange sign hovering over the hero
-      // buttons). Splashes ride the water surface, whose rest line moves by
-      // its own delta; rings/drops/waterLights carry no baked y.
+      // windows) were baked with absolute scene-space y. They must slide the
+      // same distance or they detach and float in the sky (seen on a real
+      // phone 2026-08-31: an orange sign hovering over the hero buttons).
+      // Splashes ride the water surface, whose rest line moves by its own
+      // delta; rings/drops/waterLights carry no baked y.
       const bandShift = groundY - prevGroundY;
       const surfaceShift = waterRest - prevWaterRest;
       if (bandShift !== 0) {
         for (const sign of billboards) sign.y += bandShift;
         for (const beacon of beacons) beacon.y += bandShift;
         for (const window_ of mutableWindows) window_.y += bandShift;
-        if (spire) {
-          spire.topY += bandShift;
-          spire.tipY += bandShift;
-        }
       }
       if (surfaceShift !== 0) {
         for (const splash of splashes) splash.y += surfaceShift;
@@ -716,12 +715,44 @@ export function createRainEngine(
         beacons.push({ x: cx, y: groundY - b.h - len, period: 3 + rand() * 2, phase: rand() * Math.PI * 2 });
       }
     }
+    // One skybridge — the genre's connective tissue (Akira's elevated spans):
+    // a single baked deck between two near-equal neighbors, lit by a few
+    // amber dots. Exactly one; restraint is the look (see research findings).
+    for (let i = 0; i < midBuildings.length - 1; i++) {
+      const a = midBuildings[i];
+      const b = midBuildings[i + 1];
+      const gap = b.x - (a.x + a.w);
+      const minH = Math.min(a.h, b.h);
+      if (gap < 6 || gap > 30) continue;
+      if (Math.abs(a.h - b.h) > minH * 0.3) continue;
+      if (minH < mid.height * 0.45) continue;
+      const deckY = mid.height - minH * 0.74;
+      mid.ctx.fillStyle = midSpec.fill;
+      mid.ctx.fillRect(a.x + a.w - 1, deckY, gap + 2, 2.5);
+      mid.ctx.strokeStyle = `rgba(${NEON_CYAN}, 0.35)`;
+      mid.ctx.lineWidth = 1;
+      mid.ctx.beginPath();
+      mid.ctx.moveTo(a.x + a.w - 1, deckY + 0.5);
+      mid.ctx.lineTo(a.x + a.w + gap + 1, deckY + 0.5);
+      mid.ctx.stroke();
+      const dots = 2 + Math.floor(rand() * 2);
+      mid.ctx.fillStyle = `rgba(${NEON_AMBER}, 0.5)`;
+      for (let d = 0; d < dots; d++) {
+        mid.ctx.fillRect(a.x + a.w + (gap * (d + 1)) / (dots + 1), deckY - 1.4, 1.2, 1.2);
+      }
+      break;
+    }
     cityMid = { canvas: mid.canvas, height: mid.height };
 
     const nearSpec = CITY_BANDS[2];
-    const near = makeBandCanvas(height * nearSpec.heightFrac, dpr);
+    // The near band's canvas carries headroom above the building zone for the
+    // hero megatower — a baked setback supertall. Regular buildings keep the
+    // zone height; only the hero climbs into the headroom.
+    const nearZone = height * nearSpec.heightFrac;
+    const heroRise = height * 0.26;
+    const near = makeBandCanvas(nearZone + heroRise, dpr);
     const nearTopWorld = groundY - near.height;
-    const nearBuildings = walkBuildings(rand, near.height, nearSpec, null);
+    const nearBuildings = walkBuildings(rand, nearZone, nearSpec, null);
     near.ctx.fillStyle = nearSpec.fill;
     for (const b of nearBuildings) {
       b.h = Math.max(NEAR_CELL_H * 3, Math.round(b.h / NEAR_CELL_H) * NEAR_CELL_H);
@@ -752,29 +783,58 @@ export function createRainEngine(
       );
       near.ctx.fillStyle = nearSpec.fill;
     }
-    // Signal spire: one near-band tower right-of-center gets a thin antenna
-    // reaching into the empty upper-right sky. Drawn live in the overlays —
-    // it pokes far above this band's canvas, so it can't be baked here.
+    // Hero megatower: the tallest right-of-center near tower grows into a
+    // baked setback supertall — discrete tiers narrowing toward a lit crown.
+    // An antenna bolted on a tower is definitionally NOT a supertall (height
+    // conventions count spires, exclude antennae); the integrated tapered
+    // mass is the genre's strongest silhouette cue (BR2049 Wallace, Arasaka).
+    // Research: docs/research/cyberpunk-skyline/findings.md.
     let mast: { x: number; w: number; h: number } | null = null;
     for (const b of nearBuildings) {
       const cx = b.x + b.w / 2;
       if (cx < width * 0.7 || cx > width * 0.88) continue;
       if (!mast || b.h > mast.h) mast = b;
     }
-    spire = mast
-      ? {
-          x: Math.round(mast.x + mast.w / 2) + 0.5,
-          topY: groundY - mast.h,
-          tipY: Math.max(height * 0.14, groundY - mast.h - height * 0.26),
-        }
-      : null;
+    if (mast) {
+      const cx = mast.x + mast.w / 2;
+      const tiers = [
+        { w: Math.max(14, mast.w * 0.62), rise: heroRise * 0.46 },
+        { w: Math.max(8, mast.w * 0.34), rise: heroRise * 0.34 },
+        { w: Math.max(4.5, mast.w * 0.17), rise: heroRise * 0.2 },
+      ];
+      near.ctx.fillStyle = HERO_FILL;
+      let tierTop = near.height - mast.h;
+      const tierRects: { x: number; y: number; w: number; h: number }[] = [];
+      for (const tier of tiers) {
+        const ty = tierTop - tier.rise;
+        near.ctx.fillRect(cx - tier.w / 2, ty, tier.w, tierTop - ty + 1);
+        tierRects.push({ x: cx - tier.w / 2, y: ty, w: tier.w, h: tier.rise });
+        tierTop = ty;
+      }
+      // Violet rim on the lit side + each setback shelf — the material read.
+      near.ctx.strokeStyle = `rgba(${NEON_VIOLET}, 0.4)`;
+      near.ctx.lineWidth = 1;
+      for (const rect of tierRects) {
+        near.ctx.beginPath();
+        near.ctx.moveTo(rect.x + 0.5, rect.y + rect.h);
+        near.ctx.lineTo(rect.x + 0.5, rect.y + 0.5);
+        near.ctx.lineTo(rect.x + rect.w, rect.y + 0.5);
+        near.ctx.stroke();
+      }
+      // Sparse lit floors on the lower tiers, same run grammar as the band.
+      bakeWindows(near.ctx, rand, tierRects.slice(0, 2), NEAR_CELL_W, NEAR_CELL_H, near.height, nearTopWorld, false);
+      near.ctx.fillStyle = nearSpec.fill;
+      // Crown light joins the beacon system — pulse and water streak for free.
+      beacons.push({ x: Math.round(cx) + 0.5, y: groundY - mast.h - heroRise - 2, period: 4.2, phase: rand() * Math.PI * 2 });
+    }
 
-    // Street-level neon bounce pooling at the base of the near band.
-    const wash = near.ctx.createLinearGradient(0, near.height * 0.85, 0, near.height);
+    // Street-level neon bounce pooling at the base of the near band — sized
+    // to the building ZONE, not the hero-extended canvas.
+    const wash = near.ctx.createLinearGradient(0, near.height - nearZone * 0.15, 0, near.height);
     wash.addColorStop(0, `rgba(${NEON_CYAN}, 0)`);
     wash.addColorStop(1, `rgba(${NEON_CYAN}, 0.08)`);
     near.ctx.fillStyle = wash;
-    near.ctx.fillRect(0, near.height * 0.85, width, near.height * 0.15);
+    near.ctx.fillRect(0, near.height - nearZone * 0.15, width, nearZone * 0.15);
     cityNear = { canvas: near.canvas, height: near.height };
 
     // Hero billboards live outside the bake: they flicker at runtime (the one
@@ -1222,26 +1282,6 @@ export function createRainEngine(
       const y = blimpLaneY() + Math.sin((Math.PI * 2 * sceneTime) / 7 + blimp.bobPhase) * bobAmp - blimp.h / 2;
       ctx.drawImage(blimp.sprite, blimp.x, y, blimp.w, blimp.h);
     }
-    if (spire) {
-      ctx.strokeStyle = `rgba(${STREAK_COLOR}, 0.16)`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(spire.x, spire.topY);
-      ctx.lineTo(spire.x, spire.tipY);
-      ctx.stroke();
-      const midY = spire.tipY + (spire.topY - spire.tipY) * 0.45;
-      ctx.fillStyle = `rgba(${NEON_CYAN}, 0.35)`;
-      ctx.fillRect(spire.x - 0.7, midY, 1.4, 1.4);
-      const pulse = staticMode ? 0.4 : 0.22 + 0.4 * (0.5 + 0.5 * Math.sin((Math.PI * 2 * sceneTime) / 6));
-      ctx.fillStyle = `rgba(${NEON_AMBER}, ${pulse * 0.3})`;
-      ctx.beginPath();
-      ctx.arc(spire.x, spire.tipY, 3.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = `rgba(${NEON_AMBER}, ${pulse})`;
-      ctx.beginPath();
-      ctx.arc(spire.x, spire.tipY, 1.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
     // The two hero signs are the only live glow in the scene — everything else
     // is baked. Flicker drops them to 40% for a few frames every few seconds.
     for (const sign of billboards) {
@@ -1370,10 +1410,6 @@ export function createRainEngine(
       for (const beacon of beacons) {
         const pulse = 0.15 + 0.35 * (0.5 + 0.5 * Math.sin((Math.PI * 2 * sceneTime) / beacon.period + beacon.phase));
         drawStreak(beacon.x, SURFACE_GLOW, pulse * 1.2, beacon.phase);
-      }
-      if (spire) {
-        const pulse = 0.22 + 0.4 * (0.5 + 0.5 * Math.sin((Math.PI * 2 * sceneTime) / 6));
-        drawStreak(spire.x, NEON_AMBER, pulse, 1.3);
       }
       ctx.restore();
     }
