@@ -11,6 +11,7 @@ type Ring = { x: number; radius: number; life: number };
 type CityBand = { canvas: HTMLCanvasElement; height: number };
 type MutableWindow = { x: number; y: number; w: number; h: number; alpha: number; target: number };
 type Beacon = { x: number; y: number; period: number; phase: number };
+type Billboard = { x: number; y: number; w: number; h: number; rgb: string; on: number; flickerIn: number };
 type Car = { x: number; lane: number; speed: number; size: number; phase: number };
 type Flake = { x0: number; y: number; r: number; vy: number; phase: number; drift: number; front: boolean };
 type Bubble = { x: number; y: number; vy: number; r: number; phase: number };
@@ -37,7 +38,6 @@ const MAX_DPR = 2;
 
 const SKY_TOP = "#060b14";
 const SKY_BOTTOM = "#0a1322";
-const SKY_BOTTOM_RGB = "10, 19, 34";
 const WATER_SURFACE = "#0c1a2b";
 const WATER_DEEP_RGB: Rgb = [5, 10, 18];
 const STREAK_COLOR = "168, 196, 224";
@@ -45,16 +45,51 @@ const SURFACE_GLOW = "103, 224, 255";
 const UNDER_LIGHT = "176, 208, 244";
 const WINDOW_ALPHAS = [0.2, 0.35, 0.5];
 
-// City parameters from docs/research/underwater-city/city-canvas.md.
+// Neon palette per the cyberpunk-skyline research pass: cyan + magenta is the
+// signature tension pair, sodium amber is the warm third note, violet carries
+// the haze. Cyan stays dominant so the city still belongs to the site accent.
+const NEON_CYAN = "103, 224, 255"; // #67e0ff
+const NEON_MAGENTA = "255, 46, 154"; // #ff2e9a
+const NEON_AMBER = "255, 157, 61"; // #ff9d3d
+const NEON_VIOLET = "180, 107, 255"; // #b46bff
+const NEON_CORE = "216, 250, 255"; // #d8faff — hottest inner glow
+const HAZE_VIOLET = "47, 27, 77"; // #2f1b4d — atmospheric bands between layers
+
+// The city stands on a shore strip well above the waterline — a dark
+// embankment mass separating the neon from the sea, so the skyline never
+// reads as wading in the water.
+const SHORE_FRACTION = 0.1;
+
+// City parameters from docs/research/underwater-city/city-canvas.md, fills
+// re-tuned to the indigo silhouettes the cyberpunk pass calls for.
 const CITY_BANDS = [
-  { heightFrac: 0.3, fill: "#0a1220", widthMin: 24, widthMax: 56, gapMin: 2, gapMax: 8, heightPow: 4 },
-  { heightFrac: 0.22, fill: "#091020", widthMin: 18, widthMax: 44, gapMin: 2, gapMax: 12, heightPow: 5 },
-  { heightFrac: 0.15, fill: "#070d18", widthMin: 30, widthMax: 80, gapMin: 10, gapMax: 26, heightPow: 6 },
+  { heightFrac: 0.3, fill: "#0d1830", widthMin: 24, widthMax: 56, gapMin: 2, gapMax: 8, heightPow: 4 },
+  { heightFrac: 0.22, fill: "#131c33", widthMin: 18, widthMax: 44, gapMin: 2, gapMax: 12, heightPow: 5 },
+  { heightFrac: 0.15, fill: "#1b2947", widthMin: 30, widthMax: 80, gapMin: 10, gapMax: 26, heightPow: 6 },
 ];
 const MID_CELL_W = 3;
 const MID_CELL_H = 4;
 const NEAR_CELL_W = 4;
 const NEAR_CELL_H = 5;
+
+// Window light distribution (cool megacity: cyan dominant, warm sodium pockets,
+// rare magenta) — picked per lit-run, weights cumulative.
+const WINDOW_PALETTE: { rgb: string; upTo: number }[] = [
+  { rgb: NEON_CYAN, upTo: 0.7 },
+  { rgb: NEON_AMBER, upTo: 0.9 },
+  { rgb: NEON_MAGENTA, upTo: 1 },
+];
+const BILLBOARD_COLORS = [NEON_MAGENTA, NEON_VIOLET, NEON_AMBER, NEON_CYAN];
+
+// Ambient swell (render-only, never enters the spring integrator): three
+// superposed traveling sines — long swell, cross-swell, fine chop — with
+// deep-water-ish speed ordering. Amplitudes stay conservative so the sea reads
+// "calm night with life" and raindrop ripples keep their own visual band.
+const SWELL = [
+  { ampFrac: 0.07, wavelenFrac: 1.3, speed: 10, seed: 0 },
+  { ampFrac: 0.035, wavelenFrac: 0.55, speed: 22, seed: 1.7 },
+  { ampFrac: 0.015, wavelenFrac: 0.14, speed: 38, seed: 3.4 },
+];
 
 const CAR_LANES = [
   { y: 0.42, dir: 1, alpha: 0.3, sizeMin: 1.5, sizeMax: 1.5, speedMin: 18, speedMax: 30 },
@@ -123,6 +158,7 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   let width = 0;
   let height = 0;
   let waterRest = 0;
+  let groundY = 0;
   let columnCount = 0;
   let heights = new Float32Array(0);
   let velocities = new Float32Array(0);
@@ -141,6 +177,10 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   let cityFar: CityBand | null = null;
   let cityMid: CityBand | null = null;
   let cityNear: CityBand | null = null;
+  let shoreBand: CityBand | null = null;
+  let reflectionSprite: HTMLCanvasElement | null = null;
+  let surfaceYs = new Float32Array(0);
+  const billboards: Billboard[] = [];
   const mutableWindows: MutableWindow[] = [];
   const beacons: Beacon[] = [];
   const glintXs: number[] = [];
@@ -193,8 +233,10 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     waterRest = height * (1 - WATER_FRACTION);
+    groundY = waterRest - height * SHORE_FRACTION;
     columnCount = Math.ceil(width / COLUMN_SPACING) + 1;
     heights = new Float32Array(columnCount);
+    surfaceYs = new Float32Array(columnCount);
     velocities = new Float32Array(columnCount);
     leftDeltas = new Float32Array(columnCount);
     rightDeltas = new Float32Array(columnCount);
@@ -202,10 +244,13 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     skyGradient = ctx.createLinearGradient(0, 0, 0, height);
     skyGradient.addColorStop(0, SKY_TOP);
     skyGradient.addColorStop(1, SKY_BOTTOM);
-    const farTop = waterRest - height * CITY_BANDS[0].heightFrac;
-    hazeGradient = ctx.createLinearGradient(0, farTop, 0, waterRest);
-    hazeGradient.addColorStop(0, `rgba(${SKY_BOTTOM_RGB}, 0)`);
-    hazeGradient.addColorStop(1, `rgba(${SKY_BOTTOM_RGB}, 0.15)`);
+    // Violet atmosphere pooling between the parallax layers — the haze is what
+    // makes the depth read (and half the cyberpunk look).
+    const farTop = groundY - height * CITY_BANDS[0].heightFrac;
+    hazeGradient = ctx.createLinearGradient(0, farTop, 0, groundY);
+    hazeGradient.addColorStop(0, `rgba(${HAZE_VIOLET}, 0)`);
+    hazeGradient.addColorStop(0.65, `rgba(${HAZE_VIOLET}, 0.16)`);
+    hazeGradient.addColorStop(1, `rgba(${NEON_CYAN}, 0.05)`);
     waterGradientCameraY = -1;
     abyssGradientDepth = -1;
 
@@ -282,7 +327,10 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
           if (rand() < litRatio * 0.6) {
             const run = 1 + Math.floor(rand() * 4);
             const alpha = WINDOW_ALPHAS[Math.floor(rand() * WINDOW_ALPHAS.length)];
-            bandCtx.fillStyle = `rgba(${STREAK_COLOR}, ${alpha})`;
+            // Whole runs share one neon hue — a floor of offices, not confetti.
+            const roll = rand();
+            const rgb = (WINDOW_PALETTE.find((p) => roll < p.upTo) ?? WINDOW_PALETTE[0]).rgb;
+            bandCtx.fillStyle = `rgba(${rgb}, ${alpha})`;
             for (let k = 0; k < run && col < cols; k++, col++) {
               const wx = rect.x + 1 + col * cellW;
               const wy = rect.y + 2 + row * cellH;
@@ -346,7 +394,7 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
 
     const midSpec = CITY_BANDS[1];
     const mid = makeBandCanvas(height * midSpec.heightFrac, dpr);
-    const midTopWorld = waterRest - mid.height;
+    const midTopWorld = groundY - mid.height;
     const midBuildings = walkBuildings(rand, mid.height, midSpec, clusterX);
     mid.ctx.fillStyle = midSpec.fill;
     for (const b of midBuildings) {
@@ -364,8 +412,38 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
         rects.push({ x: b.x, y: mid.height - b.h, w: b.w, h: b.h });
       }
       for (const rect of rects) mid.ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      // Rim light: a thin cyan edge on each tier's lit side, baked once.
+      mid.ctx.strokeStyle = `rgba(${NEON_CYAN}, 0.32)`;
+      mid.ctx.lineWidth = 1;
+      for (const rect of rects) {
+        mid.ctx.beginPath();
+        mid.ctx.moveTo(rect.x + 0.5, rect.y + rect.h);
+        mid.ctx.lineTo(rect.x + 0.5, rect.y + 0.5);
+        mid.ctx.lineTo(rect.x + rect.w, rect.y + 0.5);
+        mid.ctx.stroke();
+      }
       bakeWindows(mid.ctx, rand, rects, MID_CELL_W, MID_CELL_H, mid.height, midTopWorld, false);
       mid.ctx.fillStyle = midSpec.fill;
+    }
+    // Holo-billboards: saturated color blocks with baked glow — at this scale a
+    // flat rect plus bloom reads as a distant ad without needing glyphs.
+    const midBillboardCount = 3 + Math.floor(rand() * 2);
+    for (let i = 0; i < midBillboardCount; i++) {
+      const b = midBuildings[Math.floor(rand() * midBuildings.length)];
+      if (b.h < mid.height * 0.35) continue;
+      const bw = 6 + rand() * 10;
+      const bh = 3 + rand() * 5;
+      const bx = b.x + 2 + rand() * Math.max(1, b.w - bw - 4);
+      const by = mid.height - b.h + 4 + rand() * (b.h * 0.5);
+      const rgb = BILLBOARD_COLORS[Math.floor(rand() * BILLBOARD_COLORS.length)];
+      mid.ctx.save();
+      mid.ctx.shadowColor = `rgba(${rgb}, 0.9)`;
+      mid.ctx.shadowBlur = 14;
+      mid.ctx.fillStyle = `rgba(${rgb}, 0.85)`;
+      mid.ctx.fillRect(bx, by, bw, bh);
+      mid.ctx.restore();
+      mid.ctx.fillStyle = `rgba(${NEON_CORE}, 0.5)`;
+      mid.ctx.fillRect(bx + 1, by + 1, bw - 2, 1);
     }
     const byHeight = [...midBuildings].sort((a, b) => b.h - a.h);
     const antennaCount = Math.max(1, Math.floor(byHeight.length * 0.15));
@@ -375,16 +453,22 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       const len = 6 + rand() * 8;
       const cx = b.x + b.w / 2;
       mid.ctx.fillRect(cx - 0.5, mid.height - b.h - len, 1, len);
+      mid.ctx.save();
+      mid.ctx.shadowColor = `rgba(${NEON_CYAN}, 0.8)`;
+      mid.ctx.shadowBlur = 8;
+      mid.ctx.fillStyle = `rgba(${NEON_CYAN}, 0.7)`;
+      mid.ctx.fillRect(cx - 1, mid.height - b.h - len - 1, 2, 2);
+      mid.ctx.restore();
       const farEnough = beacons.every((beacon) => Math.abs(beacon.x - cx) > width * 0.12);
       if (beacons.length < beaconTarget && farEnough) {
-        beacons.push({ x: cx, y: waterRest - b.h - len, period: 3 + rand() * 2, phase: rand() * Math.PI * 2 });
+        beacons.push({ x: cx, y: groundY - b.h - len, period: 3 + rand() * 2, phase: rand() * Math.PI * 2 });
       }
     }
     cityMid = { canvas: mid.canvas, height: mid.height };
 
     const nearSpec = CITY_BANDS[2];
     const near = makeBandCanvas(height * nearSpec.heightFrac, dpr);
-    const nearTopWorld = waterRest - near.height;
+    const nearTopWorld = groundY - near.height;
     const nearBuildings = walkBuildings(rand, near.height, nearSpec, null);
     near.ctx.fillStyle = nearSpec.fill;
     for (const b of nearBuildings) {
@@ -396,6 +480,14 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
         const ch = 2 + rand() * 3;
         near.ctx.fillRect(b.x + rand() * Math.max(1, b.w - cw), near.height - b.h - ch, cw, ch);
       }
+      near.ctx.strokeStyle =
+        rand() < 0.25 ? `rgba(${NEON_MAGENTA}, 0.22)` : `rgba(${NEON_CYAN}, 0.4)`;
+      near.ctx.lineWidth = 1;
+      near.ctx.beginPath();
+      near.ctx.moveTo(b.x + 0.5, near.height);
+      near.ctx.lineTo(b.x + 0.5, near.height - b.h + 0.5);
+      near.ctx.lineTo(b.x + b.w, near.height - b.h + 0.5);
+      near.ctx.stroke();
       bakeWindows(
         near.ctx,
         rand,
@@ -408,7 +500,103 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       );
       near.ctx.fillStyle = nearSpec.fill;
     }
+    // Street-level neon bounce pooling at the base of the near band.
+    const wash = near.ctx.createLinearGradient(0, near.height * 0.85, 0, near.height);
+    wash.addColorStop(0, `rgba(${NEON_CYAN}, 0)`);
+    wash.addColorStop(1, `rgba(${NEON_CYAN}, 0.08)`);
+    near.ctx.fillStyle = wash;
+    near.ctx.fillRect(0, near.height * 0.85, width, near.height * 0.15);
     cityNear = { canvas: near.canvas, height: near.height };
+
+    // Hero billboards live outside the bake: they flicker at runtime (the one
+    // capped use of live glow the performance budget allows).
+    billboards.length = 0;
+    const heroSorted = [...nearBuildings].sort((a, b) => b.h - a.h);
+    for (let i = 0; i < Math.min(2, heroSorted.length); i++) {
+      const b = heroSorted[i];
+      const bw = Math.min(26, b.w * 0.55);
+      const bh = 8 + rand() * 6;
+      billboards.push({
+        x: b.x + (b.w - bw) / 2,
+        y: groundY - b.h + 6 + rand() * (b.h * 0.3),
+        w: bw,
+        h: bh,
+        rgb: rand() < 0.55 ? NEON_MAGENTA : NEON_AMBER,
+        on: 1,
+        flickerIn: 3 + rand() * 3,
+      });
+    }
+
+    // The shore the city stands on: a near-black embankment mass between the
+    // ground line and the water, with a sparse row of tiny quay lights — this
+    // strip is what keeps the skyline visibly ABOVE the sea.
+    const shoreH = waterRest - groundY;
+    const shore = makeBandCanvas(shoreH, dpr);
+    const shoreFill = shore.ctx.createLinearGradient(0, 0, 0, shoreH);
+    shoreFill.addColorStop(0, "#101b30");
+    shoreFill.addColorStop(0.45, "#0b1322");
+    shoreFill.addColorStop(1, "#070c16");
+    shore.ctx.fillStyle = shoreFill;
+    shore.ctx.fillRect(0, 0, width, shoreH);
+    // Street-level promenade edge where the city meets the embankment.
+    shore.ctx.fillStyle = `rgba(${NEON_CYAN}, 0.16)`;
+    shore.ctx.fillRect(0, 0, width, 1.5);
+    shore.ctx.fillStyle = "#0d1626";
+    let sx = -10;
+    while (sx < width + 10) {
+      const sw = 26 + rand() * 60;
+      const sh = 4 + rand() * Math.min(12, shoreH * 0.26);
+      shore.ctx.fillRect(sx, 2, sw, sh);
+      sx += sw + rand() * 18;
+    }
+    // Promenade lamps: an amber dot at street level with a faint pool of
+    // light beneath — plus scattered cyan quay lights lower down.
+    let px = 20 + rand() * 40;
+    while (px < width) {
+      const pool = shore.ctx.createRadialGradient(px, 4, 0, px, 4, 10);
+      pool.addColorStop(0, `rgba(${NEON_AMBER}, 0.5)`);
+      pool.addColorStop(1, `rgba(${NEON_AMBER}, 0)`);
+      shore.ctx.fillStyle = pool;
+      shore.ctx.fillRect(px - 10, 0, 20, 14);
+      shore.ctx.fillStyle = `rgba(${NEON_AMBER}, 0.9)`;
+      shore.ctx.fillRect(px - 0.8, 2.5, 1.6, 1.6);
+      px += 70 + rand() * 110;
+    }
+    shore.ctx.fillStyle = `rgba(${NEON_CYAN}, 0.5)`;
+    let lx = 14 + rand() * 30;
+    while (lx < width) {
+      shore.ctx.fillRect(lx, shoreH * 0.3 + rand() * shoreH * 0.35, 1.6, 1.6);
+      lx += 40 + rand() * 80;
+    }
+    const quayEdge = shore.ctx.createLinearGradient(0, shoreH - 5, 0, shoreH);
+    quayEdge.addColorStop(0, `rgba(${NEON_CYAN}, 0)`);
+    quayEdge.addColorStop(1, `rgba(${NEON_CYAN}, 0.24)`);
+    shore.ctx.fillStyle = quayEdge;
+    shore.ctx.fillRect(0, shoreH - 5, width, 5);
+    shoreBand = { canvas: shore.canvas, height: shoreH };
+
+    // Reflection sprite: the lit lower stretch of the skyline, flipped and
+    // pre-faded, so the water can carry the neon. The dark embankment is
+    // deliberately skipped — mirroring it drowned the signs in black; the
+    // stylized "city on the water" reads better than optical truth here.
+    const reflectSrcH = Math.min(180, near.height);
+    const reflect = makeBandCanvas(reflectSrcH, dpr);
+    reflect.ctx.save();
+    reflect.ctx.translate(0, reflectSrcH);
+    reflect.ctx.scale(1, -1);
+    // Band bottoms (street level) land at the sprite top after the flip.
+    reflect.ctx.drawImage(mid.canvas, 0, 0, width * dpr, mid.height * dpr, 0, reflectSrcH - mid.height, width, mid.height);
+    reflect.ctx.drawImage(near.canvas, 0, 0, width * dpr, near.height * dpr, 0, reflectSrcH - near.height, width, near.height);
+    reflect.ctx.restore();
+    const fade = reflect.ctx.createLinearGradient(0, 0, 0, reflectSrcH);
+    fade.addColorStop(0, "rgba(0, 0, 0, 0.5)");
+    fade.addColorStop(0.55, "rgba(0, 0, 0, 0.16)");
+    fade.addColorStop(1, "rgba(0, 0, 0, 0)");
+    reflect.ctx.globalCompositeOperation = "destination-in";
+    reflect.ctx.fillStyle = fade;
+    reflect.ctx.fillRect(0, 0, width, reflectSrcH);
+    reflect.ctx.globalCompositeOperation = "source-over";
+    reflectionSprite = reflect.canvas;
 
     glintXs.sort((a, b) => a - b);
     let write = 0;
@@ -452,8 +640,23 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     return Math.max(0, Math.min(columnCount - 1, column));
   }
 
+  // Ambient swell — a pure function of (x, sceneTime) ADDED at draw/collision
+  // time, never fed into the spring integrator, so the ripple physics can't
+  // be destabilized and the two motions just sum (GPU Gems sum-of-sines).
+  function swellAt(x: number, timeScale = 1, ampScale = 1) {
+    const bandH = height * WATER_FRACTION;
+    const t = sceneTime * timeScale;
+    let y = 0;
+    for (const w of SWELL) {
+      const k = (2 * Math.PI) / (w.wavelenFrac * width);
+      const drift = 0.03 * Math.sin(t * 0.03 + w.seed);
+      y += w.ampFrac * ampScale * bandH * Math.sin(k * x - k * w.speed * t + w.seed + drift);
+    }
+    return y;
+  }
+
   function surfaceYAt(x: number) {
-    return waterRest + heights[columnAt(x)];
+    return waterRest + heights[columnAt(x)] + swellAt(x);
   }
 
   function spawnDrops(dt: number) {
@@ -575,6 +778,14 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       window_.alpha += (window_.target - window_.alpha) * Math.min(1, SIM_STEP / 0.35);
     }
 
+    for (const sign of billboards) {
+      sign.flickerIn -= SIM_STEP;
+      if (sign.flickerIn <= 0) {
+        sign.on = sign.on < 1 ? 1 : 0.4;
+        sign.flickerIn = sign.on < 1 ? 0.05 + Math.random() * 0.08 : 3 + Math.random() * 3;
+      }
+    }
+
     carSpawnIn -= SIM_STEP;
     if (carSpawnIn <= 0) {
       carSpawnIn = 6 + Math.random() * 8;
@@ -642,7 +853,9 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     submerge = clamp01(scrollYCached / submergeRange);
     depth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
     const eased = submerge * submerge * (3 - 2 * submerge);
-    cameraY = eased * (waterRest + MAX_WAVE_HEIGHT + 24);
+    // Margin covers physics chop + the additive swell so no crest peeks back
+    // into frame at full submerge (max swell ~0.12 * water band).
+    cameraY = eased * (waterRest + MAX_WAVE_HEIGHT + 40);
     if (onDepth) {
       const combined = clamp01(submerge * 0.4 + depth * 0.6);
       if (lastEmittedDepth < 0 || Math.abs(combined - lastEmittedDepth) > 0.003) {
@@ -679,12 +892,13 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   }
 
   function drawCityBands() {
-    if (!cityFar || !cityMid || !cityNear) return;
-    ctx.drawImage(cityFar.canvas, 0, Math.floor(waterRest - cityFar.height), width, cityFar.height);
-    ctx.drawImage(cityMid.canvas, 0, Math.floor(waterRest - cityMid.height), width, cityMid.height);
+    if (!cityFar || !cityMid || !cityNear || !shoreBand) return;
+    ctx.drawImage(cityFar.canvas, 0, Math.floor(groundY - cityFar.height), width, cityFar.height);
+    ctx.drawImage(cityMid.canvas, 0, Math.floor(groundY - cityMid.height), width, cityMid.height);
     ctx.fillStyle = hazeGradient;
-    ctx.fillRect(0, waterRest - cityFar.height, width, cityFar.height);
-    ctx.drawImage(cityNear.canvas, 0, Math.floor(waterRest - cityNear.height), width, cityNear.height);
+    ctx.fillRect(0, groundY - cityFar.height, width, cityFar.height);
+    ctx.drawImage(cityNear.canvas, 0, Math.floor(groundY - cityNear.height), width, cityNear.height);
+    ctx.drawImage(shoreBand.canvas, 0, Math.floor(groundY), width, shoreBand.height);
   }
 
   function renderCityOverlays(staticMode: boolean) {
@@ -705,6 +919,19 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       ctx.beginPath();
       ctx.arc(beacon.x, beacon.y, 1.2, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // The two hero signs are the only live glow in the scene — everything else
+    // is baked. Flicker drops them to 40% for a few frames every few seconds.
+    for (const sign of billboards) {
+      const level = staticMode ? 1 : sign.on;
+      ctx.save();
+      ctx.shadowColor = `rgba(${sign.rgb}, ${0.85 * level})`;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = `rgba(${sign.rgb}, ${0.85 * level})`;
+      ctx.fillRect(sign.x, sign.y, sign.w, sign.h);
+      ctx.restore();
+      ctx.fillStyle = `rgba(${NEON_CORE}, ${0.55 * level})`;
+      ctx.fillRect(sign.x + 2, sign.y + 2, sign.w - 4, 1.5);
     }
     if (!staticMode) renderCars();
   }
@@ -747,16 +974,52 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   function renderWater() {
     ensureWaterGradient();
     const floor = height + cameraY;
+
+    // Back swell layer: slower, smaller, a touch higher — parallax makes the
+    // main surface read as the near edge of a body of water, not a line.
+    ctx.beginPath();
+    ctx.moveTo(0, waterRest + 30);
+    for (let i = 0; i < columnCount; i++) {
+      const x = i * COLUMN_SPACING;
+      ctx.lineTo(x, waterRest - 5 + heights[i] * 0.5 + swellAt(x, 0.5, 0.6));
+    }
+    ctx.lineTo(width, waterRest + 30);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(9, 16, 30, 0.9)";
+    ctx.fill();
+
+    // Main surface polyline (physics heights + visual swell), cached for the
+    // stroke/foam passes below.
+    for (let i = 0; i < columnCount; i++) {
+      surfaceYs[i] = waterRest + heights[i] + swellAt(i * COLUMN_SPACING);
+    }
     ctx.beginPath();
     ctx.moveTo(0, floor);
-    ctx.lineTo(0, waterRest + heights[0]);
+    ctx.lineTo(0, surfaceYs[0]);
     for (let i = 1; i < columnCount; i++) {
-      ctx.lineTo(i * COLUMN_SPACING, waterRest + heights[i]);
+      ctx.lineTo(i * COLUMN_SPACING, surfaceYs[i]);
     }
     ctx.lineTo(width, floor);
     ctx.closePath();
     ctx.fillStyle = waterGradient;
     ctx.fill();
+
+    // Neon skyline reflection: narrow columns of the baked flipped sprite,
+    // each riding its own column's surface so the image shimmers with the
+    // waves. Skipped once mostly submerged — the surface has left the frame.
+    if (reflectionSprite && submerge < 0.6) {
+      const colW = 7;
+      const scale = reflectionSprite.width / width;
+      const srcH = reflectionSprite.height / scale;
+      ctx.save();
+      ctx.globalAlpha = 0.35 * (1 - submerge / 0.6);
+      for (let x = 0; x < width; x += colW) {
+        const i = columnAt(x + colW * 0.5);
+        const top = surfaceYs[i] + (heights[i] + swellAt(x, 1, 0.4)) * 0.6;
+        ctx.drawImage(reflectionSprite, x * scale, 0, colW * scale, reflectionSprite.height, x, top, colW, srcH);
+      }
+      ctx.restore();
+    }
 
     if (submerge > 0.05) {
       const ceiling = ctx.createLinearGradient(0, waterRest, 0, waterRest + 70);
@@ -767,9 +1030,9 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     }
 
     ctx.beginPath();
-    ctx.moveTo(0, waterRest + heights[0]);
+    ctx.moveTo(0, surfaceYs[0]);
     for (let i = 1; i < columnCount; i++) {
-      ctx.lineTo(i * COLUMN_SPACING, waterRest + heights[i]);
+      ctx.lineTo(i * COLUMN_SPACING, surfaceYs[i]);
     }
     ctx.strokeStyle = `rgba(${SURFACE_GLOW}, 0.08)`;
     ctx.lineWidth = 3.5;
@@ -778,11 +1041,27 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
+    // Crest foam: a brighter dash wherever the surface tops out (slope flips
+    // rising -> falling in screen space) with enough prominence to matter.
+    ctx.strokeStyle = `rgba(${SURFACE_GLOW}, 0.4)`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let i = 1; i < columnCount - 1; i++) {
+      const y = surfaceYs[i];
+      if (y >= surfaceYs[i - 1] || y > surfaceYs[i + 1]) continue;
+      if ((surfaceYs[i - 1] + surfaceYs[i + 1]) / 2 - y < 0.55) continue;
+      const x = i * COLUMN_SPACING;
+      ctx.moveTo(x - COLUMN_SPACING * 0.8, y + 0.5);
+      ctx.lineTo(x + COLUMN_SPACING * 0.8, y + 0.5);
+    }
+    ctx.stroke();
+
     ctx.lineWidth = 1;
     for (const x of glintXs) {
-      const displacement = heights[columnAt(x)];
+      const i = columnAt(x);
+      const displacement = surfaceYs[i] - waterRest;
       const alpha = 0.06 + 0.1 * clamp01(0.5 + displacement / MAX_WAVE_HEIGHT);
-      const top = waterRest + displacement + 2;
+      const top = surfaceYs[i] + 2;
       ctx.strokeStyle = `rgba(${STREAK_COLOR}, ${alpha})`;
       ctx.beginPath();
       ctx.moveTo(x, top);
