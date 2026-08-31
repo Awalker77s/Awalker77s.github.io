@@ -1,8 +1,12 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Project } from "@/lib/content";
+
+// Static export ships pre-generated WebP pairs (foo.webp + foo-sm.webp);
+// next/image can't emit a srcset under `unoptimized`, so the cards use a
+// plain <img> whose srcset lets phones fetch the 800w variant.
+const smallVariant = (src: string) => src.replace(/\.webp$/, "-sm.webp");
 
 const arrowButton =
   "pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full border border-edge bg-background/70 text-lg leading-none text-muted backdrop-blur transition-colors hover:border-accent/40 hover:text-accent";
@@ -62,12 +66,16 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
           aria-label={`Expand ${project.name} image`}
           className="block w-full cursor-zoom-in"
         >
-          <Image
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={current.src}
+            srcSet={`${smallVariant(current.src)} 800w, ${current.src} ${current.width}w`}
+            sizes="(min-width: 768px) 50vw, 100vw"
             alt={current.alt}
             width={current.width}
             height={current.height}
-            sizes="(min-width: 768px) 50vw, 100vw"
+            loading="lazy"
+            decoding="async"
             className="w-full rounded-lg border border-edge"
           />
         </button>
@@ -165,12 +173,15 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
             ✕
           </button>
           <div className="flex max-h-full max-w-full flex-col items-center" onClick={(event) => event.stopPropagation()}>
-            <Image
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={current.src}
+              srcSet={`${smallVariant(current.src)} 800w, ${current.src} ${current.width}w`}
+              sizes="92vw"
               alt={current.alt}
               width={current.width}
               height={current.height}
-              sizes="92vw"
+              decoding="async"
               className="h-auto max-h-[82vh] w-auto max-w-[92vw] rounded-lg border border-edge object-contain"
             />
             <p className="mt-3 max-w-3xl text-center text-xs leading-relaxed text-muted">{current.alt}</p>

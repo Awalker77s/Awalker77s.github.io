@@ -44,9 +44,9 @@ export const projects: Project[] = [
     ],
     stack: ["Electron", "TypeScript", "React", "Chrome MV3", "Windows UIA", "Ollama", "Claude Code"],
     images: [
-      { src: "/projects/drydock-chat.png", alt: "Drydock — the Chat tab: a plain-English request drafted in the composer, with your own Claude connected", width: 2000, height: 703 },
-      { src: "/projects/drydock.png", alt: "Drydock — automation run timeline with token and cost receipt", width: 2000, height: 1030 },
-      { src: "/projects/drydock-editor.png", alt: "Drydock — an automation's detail sheet: when it runs, which files it reads, what you get, allowed tools, and past runs, with the 'Claude never sees it' privacy badge", width: 2000, height: 1032 },
+      { src: "/projects/drydock-chat.webp", alt: "Drydock — the Chat tab: a plain-English request drafted in the composer, with your own Claude connected", width: 2000, height: 703 },
+      { src: "/projects/drydock.webp", alt: "Drydock — automation run timeline with token and cost receipt", width: 2000, height: 1030 },
+      { src: "/projects/drydock-editor.webp", alt: "Drydock — an automation's detail sheet: when it runs, which files it reads, what you get, allowed tools, and past runs, with the 'Claude never sees it' privacy badge", width: 2000, height: 1032 },
     ],
     note: "Private build — ask me for a walkthrough.",
   },
@@ -65,13 +65,13 @@ export const projects: Project[] = [
     stack: ["Node", "Claude Code", "Hooks API", "Zero dependencies"],
     images: [
       {
-        src: "/projects/truststack.png",
+        src: "/projects/truststack.webp",
         alt: "trust-stack flight console — an agent action falls through the skills field (advice) into the hooks wall (physics), splitting to auto-merge or human approval, with the capability list alongside.",
         width: 1600,
         height: 780,
       },
       {
-        src: "/projects/truststack-grid.png",
+        src: "/projects/truststack-grid.webp",
         alt: "trust-stack capability grid — STOPS: --no-verify becomes a question; ROUTES: low risk merges, high risk waits; CHECKS: catches bypasses humans miss; REMEMBERS: every decision permanently logged.",
         width: 1600,
         height: 780,
@@ -92,11 +92,11 @@ export const projects: Project[] = [
     ],
     stack: ["Next.js", "React", "TypeScript", "Three.js", "Tailwind", "Python (CV pipeline)"],
     images: [
-      { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 880 },
-      { src: "/projects/fight-robot.png", alt: "FIGHT — the ATLAS-R fighter front-on in the Film Room, guard up under the ring spotlight", width: 1600, height: 1000 },
-      { src: "/projects/fight-practice.png", alt: "FIGHT — Practice in the basement: the robot squares up with a ghost partner under one bare bulb, drill presets and the punch deck alongside", width: 1600, height: 1000 },
-      { src: "/projects/fight-loadout.png", alt: "FIGHT — the Loadout hub: five equip slots, the move store, credits, and the fighter glowing with equipped gear", width: 1600, height: 1000 },
-      { src: "/projects/fight-menu.png", alt: "FIGHT — mode select: Fight, Loadout, Practice, Watch, Training, and Physics Lab over the empty ring", width: 1600, height: 1000 },
+      { src: "/projects/fight.webp", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 880 },
+      { src: "/projects/fight-robot.webp", alt: "FIGHT — the ATLAS-R fighter front-on in the Film Room, guard up under the ring spotlight", width: 1600, height: 1000 },
+      { src: "/projects/fight-practice.webp", alt: "FIGHT — Practice in the basement: the robot squares up with a ghost partner under one bare bulb, drill presets and the punch deck alongside", width: 1600, height: 1000 },
+      { src: "/projects/fight-loadout.webp", alt: "FIGHT — the Loadout hub: five equip slots, the move store, credits, and the fighter glowing with equipped gear", width: 1600, height: 1000 },
+      { src: "/projects/fight-menu.webp", alt: "FIGHT — mode select: Fight, Loadout, Practice, Watch, Training, and Physics Lab over the empty ring", width: 1600, height: 1000 },
     ],
     note: "Async tournaments are the next milestone.",
   },
@@ -114,11 +114,11 @@ export const projects: Project[] = [
     ],
     stack: ["TypeScript", "React", "Vite", "Supabase", "ts-fsrs", "Vercel"],
     images: [
-      { src: "/projects/mivora.png", alt: "Mivora home page — gamified AI skill tracks", width: 1600, height: 1000 },
-      { src: "/projects/mivora-track.png", alt: "Mivora — the Building with AI path: lesson 1 mastered with its project piece built, lesson 2 unlocked, later lessons locked behind the mastery checkpoint", width: 1600, height: 1000 },
-      { src: "/projects/mivora-practice.png", alt: "Mivora — a mastery-check question mid-lesson: instant verdict, the worked explanation, and Pando the mascot cheering the streak", width: 1600, height: 1000 },
-      { src: "/projects/mivora-lesson.png", alt: "Mivora lesson page — Bit vs. Qubit, lesson 1 of the Quantum Computing track", width: 1600, height: 1000 },
-      { src: "/projects/mivora-progress.png", alt: "Mivora — the progress dashboard: level ring, XP, tokens, Bronze league, streaks, avatars, and unlockable titles", width: 1600, height: 1000 },
+      { src: "/projects/mivora.webp", alt: "Mivora home page — gamified AI skill tracks", width: 1600, height: 1000 },
+      { src: "/projects/mivora-track.webp", alt: "Mivora — the Building with AI path: lesson 1 mastered with its project piece built, lesson 2 unlocked, later lessons locked behind the mastery checkpoint", width: 1600, height: 1000 },
+      { src: "/projects/mivora-practice.webp", alt: "Mivora — a mastery-check question mid-lesson: instant verdict, the worked explanation, and Pando the mascot cheering the streak", width: 1600, height: 1000 },
+      { src: "/projects/mivora-lesson.webp", alt: "Mivora lesson page — Bit vs. Qubit, lesson 1 of the Quantum Computing track", width: 1600, height: 1000 },
+      { src: "/projects/mivora-progress.webp", alt: "Mivora — the progress dashboard: level ring, XP, tokens, Bronze league, streaks, avatars, and unlockable titles", width: 1600, height: 1000 },
     ],
   },
   {
@@ -135,8 +135,8 @@ export const projects: Project[] = [
     ],
     stack: ["Python", "PyMuPDF", "Tesseract", "Sentence-Transformers", "FAISS", "OpenAI", "Gradio"],
     images: [
-      { src: "/projects/rag-detail.png", alt: "Document Intelligence — detailed architecture with per-stage internals, fallbacks, and model choices (expand to read)", width: 1600, height: 1000 },
-      { src: "/projects/rag.png", alt: "Document Intelligence — five-stage RAG pipeline: ingest, chunk, embed, retrieve, generate", width: 1600, height: 1000 },
+      { src: "/projects/rag-detail.webp", alt: "Document Intelligence — detailed architecture with per-stage internals, fallbacks, and model choices (expand to read)", width: 1600, height: 1000 },
+      { src: "/projects/rag.webp", alt: "Document Intelligence — five-stage RAG pipeline: ingest, chunk, embed, retrieve, generate", width: 1600, height: 1000 },
     ],
     repoUrl: "https://github.com/Awalker77s/Document-Intelligence-Pipeline",
   },
@@ -154,7 +154,7 @@ export const projects: Project[] = [
     ],
     stack: ["Obsidian", "Markdown", "Git", "Claude Code"],
     images: [
-      { src: "/projects/brain.png", alt: "Brain — force-directed graph of the real Obsidian vault", width: 1600, height: 1000 },
+      { src: "/projects/brain.webp", alt: "Brain — force-directed graph of the real Obsidian vault", width: 1600, height: 1000 },
     ],
   },
   {
@@ -171,10 +171,10 @@ export const projects: Project[] = [
     ],
     stack: ["TypeScript", "React", "Supabase", "Edge Functions", "OpenAI", "Stripe"],
     images: [
-      { src: "/projects/echinoid.png", alt: "Echinoid ID — fossil identification interface", width: 1600, height: 965 },
-      { src: "/projects/echinoid-identify.png", alt: "Echinoid ID — identifying a specimen: a fossil photo attached as the aboral view, with free identifications remaining", width: 1600, height: 1000 },
-      { src: "/projects/echinoid-collection.png", alt: "Echinoid ID — Bill Thompson's species database: genus, family, formation, and age for each reference specimen, with draft entries", width: 1600, height: 1000 },
-      { src: "/projects/echinoid-how.png", alt: "Echinoid ID — how it works: upload photos, add field details, analyze features, compare", width: 1600, height: 1000 },
+      { src: "/projects/echinoid.webp", alt: "Echinoid ID — fossil identification interface", width: 1600, height: 965 },
+      { src: "/projects/echinoid-identify.webp", alt: "Echinoid ID — identifying a specimen: a fossil photo attached as the aboral view, with free identifications remaining", width: 1600, height: 1000 },
+      { src: "/projects/echinoid-collection.webp", alt: "Echinoid ID — Bill Thompson's species database: genus, family, formation, and age for each reference specimen, with draft entries", width: 1600, height: 1000 },
+      { src: "/projects/echinoid-how.webp", alt: "Echinoid ID — how it works: upload photos, add field details, analyze features, compare", width: 1600, height: 1000 },
     ],
   },
   {
@@ -190,9 +190,9 @@ export const projects: Project[] = [
     ],
     stack: ["React", "Vite", "Tailwind", "Supabase", "Resend", "Vercel"],
     images: [
-      { src: "/projects/pizza-home.png", alt: "Mother Truckin' Pizza — home page hero with photo collage and stats (10+ years rolling, 500+ events catered)", width: 1600, height: 1000 },
-      { src: "/projects/pizza.png", alt: "Mother Truckin' Pizza — menu page", width: 1600, height: 765 },
-      { src: "/projects/pizza-catering.png", alt: "Mother Truckin' Pizza — catering page with wedding, corporate, party, and festival service cards", width: 1600, height: 1000 },
+      { src: "/projects/pizza-home.webp", alt: "Mother Truckin' Pizza — home page hero with photo collage and stats (10+ years rolling, 500+ events catered)", width: 1600, height: 1000 },
+      { src: "/projects/pizza.webp", alt: "Mother Truckin' Pizza — menu page", width: 1600, height: 765 },
+      { src: "/projects/pizza-catering.webp", alt: "Mother Truckin' Pizza — catering page with wedding, corporate, party, and festival service cards", width: 1600, height: 1000 },
     ],
   },
 ];
