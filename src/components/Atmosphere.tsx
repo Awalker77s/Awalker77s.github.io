@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createRainEngine, type RainEngine } from "@/lib/rain/engine";
 import { createAtmosphereAudio, type AtmosphereAudio } from "@/lib/rain/audio";
 import { initSmoothScroll } from "@/lib/scroll";
+import { blimpSkills } from "@/lib/content";
 
 const MOTION_KEY = "rain-motion";
 const SOUND_KEY = "rain-sound";
@@ -26,11 +27,15 @@ export default function Atmosphere() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const engine = createRainEngine(canvas, (depth) => {
-      depthRef.current = depth;
-      document.documentElement.style.setProperty("--depth", depth.toFixed(3));
-      audioRef.current?.setDepth(depth);
-    });
+    const engine = createRainEngine(
+      canvas,
+      (depth) => {
+        depthRef.current = depth;
+        document.documentElement.style.setProperty("--depth", depth.toFixed(3));
+        audioRef.current?.setDepth(depth);
+      },
+      blimpSkills,
+    );
     engineRef.current = engine;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -122,13 +127,13 @@ export default function Atmosphere() {
   }
 
   const pill =
-    "flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-medium backdrop-blur transition-colors";
+    "flex min-h-11 items-center gap-2 rounded-full border px-4 py-2 text-xs font-medium backdrop-blur transition-colors";
   const pillOn = "border-accent/40 bg-surface/80 text-accent";
   const pillOff = "border-edge bg-surface/80 text-faint hover:text-muted";
 
   return (
     <>
-      <canvas ref={canvasRef} aria-hidden className="fixed inset-0 -z-10 h-full w-full bg-background" />
+      <canvas ref={canvasRef} aria-hidden className="pointer-events-none fixed inset-0 -z-10 h-full w-full bg-background" />
       <div className="fixed bottom-5 right-5 z-40 flex gap-2">
         <button
           type="button"

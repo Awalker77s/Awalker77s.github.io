@@ -35,7 +35,7 @@ export default function Home() {
       </nav>
 
       <main className="relative mx-auto max-w-5xl px-6">
-        <section className="flex min-h-screen flex-col justify-center py-24">
+        <section className="flex min-h-dvh flex-col justify-start pb-24 pt-28 md:pt-32">
           <p className="font-mono text-xs uppercase tracking-widest text-accent md:text-sm">
             {site.role}
           </p>
@@ -49,7 +49,7 @@ export default function Home() {
           <div className="mt-8 flex flex-wrap gap-4">
             <a
               href="#projects"
-              className="rounded-full border border-accent/40 px-5 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/10"
+              className="inline-flex min-h-11 items-center rounded-full border border-accent/40 px-5 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/10"
             >
               See the projects ↓
             </a>
@@ -57,7 +57,7 @@ export default function Home() {
               href={site.github}
               target="_blank"
               rel="noreferrer"
-              className="rounded-full border border-edge px-5 py-2.5 text-sm font-medium text-muted transition-colors hover:border-accent/40 hover:text-accent"
+              className="inline-flex min-h-11 items-center rounded-full border border-edge px-5 py-2.5 text-sm font-medium text-muted transition-colors hover:border-accent/40 hover:text-accent"
             >
               GitHub ↗
             </a>
@@ -136,15 +136,24 @@ export default function Home() {
           <p className="mt-8 max-w-2xl text-2xl font-medium text-foreground">
             Building something where AI agents should be doing the work? Let&apos;s talk.
           </p>
-          <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3 text-sm font-medium">
-            <a href={`mailto:${site.email}`} className="text-accent hover:underline">
+          <div className="mt-6 flex flex-wrap gap-x-8 gap-y-1 text-sm font-medium">
+            <a
+              href={`mailto:${site.email}`}
+              className="inline-flex min-h-11 items-center text-accent hover:underline"
+            >
               {site.email}
+            </a>
+            <a
+              href={`tel:+1${site.phone.replace(/-/g, "")}`}
+              className="inline-flex min-h-11 items-center text-muted transition-colors hover:text-accent"
+            >
+              {site.phone}
             </a>
             <a
               href={site.github}
               target="_blank"
               rel="noreferrer"
-              className="text-muted transition-colors hover:text-accent"
+              className="inline-flex min-h-11 items-center text-muted transition-colors hover:text-accent"
             >
               github.com/Awalker77s ↗
             </a>
@@ -152,7 +161,7 @@ export default function Home() {
               href={site.linkedin}
               target="_blank"
               rel="noreferrer"
-              className="text-muted transition-colors hover:text-accent"
+              className="inline-flex min-h-11 items-center text-muted transition-colors hover:text-accent"
             >
               linkedin.com/in/alexander-walker ↗
             </a>

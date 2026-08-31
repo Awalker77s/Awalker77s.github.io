@@ -23,6 +23,7 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
             alt={project.image.alt}
             width={project.image.width}
             height={project.image.height}
+            sizes="(min-width: 768px) 50vw, 100vw"
             className="w-full rounded-lg border border-edge"
           />
         ) : null}
