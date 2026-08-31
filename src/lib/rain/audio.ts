@@ -1,6 +1,7 @@
 export type AtmosphereAudio = {
   enable: () => Promise<void>;
   disable: () => void;
+  isRunning: () => boolean;
   setDepth: (depth: number) => void;
   destroy: () => void;
 };
@@ -17,12 +18,19 @@ const FADE_OUT_S = 0.6;
 // fully underwater (it emits 0.4·submersion + 0.6·page depth) — because the
 // muffle belongs to crossing the waterline; below it the cutoff holds and only
 // depthTrim keeps sinking.
+//
+// Since the uplift pass, the muffle only governs the SURFACE world (rain +
+// bright keys + plucks). A second, deep world — open fifth/octave pads with no
+// thirds, native to the water — bypasses the muffle and swells in as the
+// surface world fades, so descending reads as a mood change, not a volume dip.
+// The bass sits below the 300 Hz floor and carries through the waterline in
+// both worlds, which is what keeps the crossfade feeling continuous.
 const MUFFLE_SURFACE_HZ = 3000;
 const MUFFLE_DEEP_HZ = 300;
 const SUBMERGE_DEPTH = 0.4;
 const DEPTH_SMOOTH_S = 0.12;
 
-// Rain sits far behind the music now: a light bed, not the subject.
+// Rain sits far behind the music: a light bed, not the subject.
 const RAIN_BODY_LEVEL = 0.15;
 const SPARKLE_LEVEL = 0.035;
 const RUMBLE_LEVEL = 0.03;
@@ -30,21 +38,39 @@ const RUMBLE_LEVEL = 0.03;
 const KEYS_LEVEL = 0.32;
 const BASS_LEVEL = 0.25;
 const PLUCK_PEAK = 0.09;
-const CHORD_S = 8;
+const PLUCK_CHANCE = 0.04;
+const DEEP_LEVEL = 0.34;
+const DEEP_BELL_PEAK = 0.05;
+const CHORD_S = 7;
 const GLIDE_S = 0.12;
+// Deep pad voices take whole seconds to arrive at each new chord — underwater
+// nothing moves quickly, and the slow swell between chords is most of the mood.
+const DEEP_GLIDE_S = 1.6;
 const LOOKAHEAD_S = 1.2;
 const TICK_MS = 125;
 
-// Dm9 → Bbmaj9 → Gm11 → Am7 in D natural minor, beatless — voice-led so each
-// of the four key voices moves at most one scale step between chords.
+// C major pentatonic, C5–C6 — every note sits inside all four chords of the
+// loop, so the bell line can wander freely without ever landing wrong. A
+// sparse high pentatonic top-line is the clearest "hopeful" signal the bed
+// has (game-audio vertical-layering literature is unanimous on this one).
+const BELL_POOL = [523.25, 587.33, 659.26, 783.99, 880.0, 1046.5];
+
+// Cmaj9 → Fmaj9 → Am11 → G(add9) — the I–IV–vi–V loop in C major, voiced a
+// fourth above the old D-minor bed with maj9/add9 clusters so it reads warm
+// and hopeful instead of ominous. The vi is voiced WITHOUT its minor third
+// (G B D E over A) so even the minor stop stays open. Voice-led: three of the
+// four voices move by step; the top voice glides a gentle third.
 const PROGRESSION = [
-  { bass: 73.42, keys: [174.61, 220.0, 261.63, 329.63] },
-  { bass: 116.54, keys: [174.61, 220.0, 261.63, 293.66] },
-  { bass: 98.0, keys: [174.61, 220.0, 261.63, 293.66] },
-  { bass: 110.0, keys: [196.0, 220.0, 261.63, 329.63] },
+  { bass: 65.41, keys: [196.0, 246.94, 293.66, 329.63], deep: [130.81, 196.0, 261.63] },
+  { bass: 87.31, keys: [220.0, 261.63, 329.63, 392.0], deep: [130.81, 174.61, 261.63] },
+  { bass: 110.0, keys: [196.0, 246.94, 293.66, 329.63], deep: [110.0, 164.81, 220.0] },
+  { bass: 98.0, keys: [220.0, 246.94, 293.66, 392.0], deep: [98.0, 146.83, 196.0] },
 ];
 // Higher voices read louder at equal gain, so the stack tapers upward.
 const VOICE_LEVELS = [0.24, 0.22, 0.2, 0.17];
+// The deep pad swells per voice on offset LFOs so it breathes like a current.
+const DEEP_VOICE_LEVELS = [0.34, 0.26, 0.2];
+const DEEP_SWELL_HZ = [0.05, 0.062, 0.077];
 
 type Graph = {
   context: AudioContext;
@@ -56,9 +82,13 @@ type Graph = {
   rumbleGain: GainNode;
   muffleA: BiquadFilterNode;
   muffleB: BiquadFilterNode;
+  deepFilter: BiquadFilterNode;
+  deepGain: GainNode;
+  bellSend: DelayNode;
   depthTrim: GainNode;
   master: GainNode;
   keysOscs: OscillatorNode[];
+  deepOscs: OscillatorNode[];
   bassOsc: OscillatorNode;
 };
 
@@ -104,6 +134,7 @@ export function createAtmosphereAudio(): AtmosphereAudio {
   let suspendTimer: number | null = null;
   let depth = 0;
   let airLevel = 1;
+  let deepLevel = 0;
   let chordIndex = 1;
   let nextChordTime = 0;
 
@@ -173,8 +204,10 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     breathLfo.connect(breathDepth).connect(breath.gain);
 
     // Keys: two slightly detuned oscillators per voice into a warm lowpass —
-    // the detune beat plus the wow LFO below is what reads as "tape".
-    const keysFilter = lowpass(context, 1800, 0.5);
+    // the detune beat plus the wow LFO below is what reads as "tape". The
+    // 2400 Hz cutoff (up from the minor bed's 1800) lets the maj9 shimmer
+    // through without losing the tape softness.
+    const keysFilter = lowpass(context, 2400, 0.5);
     const keysGain = context.createGain();
     keysGain.gain.value = KEYS_LEVEL;
     keysFilter.connect(keysGain).connect(muffleA);
@@ -204,7 +237,7 @@ export function createAtmosphereAudio(): AtmosphereAudio {
 
     const tremolo = context.createOscillator();
     tremolo.type = "sine";
-    tremolo.frequency.value = 4.5;
+    tremolo.frequency.value = 3.4;
     const tremoloDepth = context.createGain();
     tremoloDepth.gain.value = KEYS_LEVEL * 0.25;
     tremolo.connect(tremoloDepth).connect(keysGain.gain);
@@ -216,13 +249,66 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     bassGain.gain.value = BASS_LEVEL;
     bassOsc.connect(bassGain).connect(muffleA);
 
+    // A soft feedback delay shared by the bell plucks — two or three fading
+    // repeats read as space and playfulness without a convolution reverb.
+    const bellSend = context.createDelay(1);
+    bellSend.delayTime.value = 0.31;
+    const bellFeedback = context.createGain();
+    bellFeedback.gain.value = 0.22;
+    const bellWet = context.createGain();
+    bellWet.gain.value = 0.5;
+    bellSend.connect(bellFeedback).connect(bellSend);
+    bellSend.connect(bellWet).connect(muffleA);
+
+    // The deep world: one sine per pad voice, open fifths and octaves only —
+    // no thirds, so it reads as vast rather than sad. It joins the chain AFTER
+    // the muffle (the pads are native to the water; muffling them too would
+    // just be a second volume knob) but before depthTrim, so the whole mix
+    // still settles as you sink. Its own fixed lowpass keeps it felt more
+    // than heard.
+    const deepFilter = lowpass(context, 850, 0.5);
+    const deepGain = context.createGain();
+    deepGain.gain.value = 0;
+    deepFilter.connect(deepGain).connect(breath);
+
+    const deepWow = context.createOscillator();
+    deepWow.type = "sine";
+    deepWow.frequency.value = 0.13;
+    const deepWowDepth = context.createGain();
+    deepWowDepth.gain.value = 6;
+    deepWow.connect(deepWowDepth);
+
+    const deepOscs: OscillatorNode[] = [];
+    const deepSwells: OscillatorNode[] = [];
+    PROGRESSION[0].deep.forEach((frequency, voice) => {
+      const voiceGain = context.createGain();
+      voiceGain.gain.value = DEEP_VOICE_LEVELS[voice];
+      voiceGain.connect(deepFilter);
+      const osc = context.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = frequency;
+      deepWowDepth.connect(osc.detune);
+      osc.connect(voiceGain);
+      deepOscs.push(osc);
+      const swell = context.createOscillator();
+      swell.type = "sine";
+      swell.frequency.value = DEEP_SWELL_HZ[voice];
+      const swellDepth = context.createGain();
+      swellDepth.gain.value = DEEP_VOICE_LEVELS[voice] * 0.25;
+      swell.connect(swellDepth).connect(voiceGain.gain);
+      deepSwells.push(swell);
+    });
+
     noise.start();
     gust.start();
     breathLfo.start();
     wow.start();
     tremolo.start();
     bassOsc.start();
+    deepWow.start();
     for (const osc of keysOscs) osc.start();
+    for (const osc of deepOscs) osc.start();
+    for (const osc of deepSwells) osc.start();
 
     chordIndex = 1;
     nextChordTime = context.currentTime + CHORD_S;
@@ -237,9 +323,13 @@ export function createAtmosphereAudio(): AtmosphereAudio {
       rumbleGain,
       muffleA,
       muffleB,
+      deepFilter,
+      deepGain,
+      bellSend,
       depthTrim,
       master,
       keysOscs,
+      deepOscs,
       bassOsc,
     };
     applyDepth(built);
@@ -252,11 +342,15 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     const eased = submerge * submerge * (3 - 2 * submerge);
     const abyss = Math.max(0, (depth - SUBMERGE_DEPTH) / (1 - SUBMERGE_DEPTH));
     airLevel = (1 - eased) * (1 - eased);
+    // Equal-power-ish fade-in for the pads: sin curve against the muffle's
+    // fade-out of the bright keys, with a small extra lift toward the abyss.
+    deepLevel = DEEP_LEVEL * Math.sin((Math.PI / 2) * eased) * (0.85 + 0.15 * abyss);
     const cutoff = MUFFLE_SURFACE_HZ * Math.pow(MUFFLE_DEEP_HZ / MUFFLE_SURFACE_HZ, eased);
     g.muffleA.frequency.setTargetAtTime(cutoff, now, DEPTH_SMOOTH_S);
     g.muffleB.frequency.setTargetAtTime(cutoff, now, DEPTH_SMOOTH_S);
     g.sparkleGain.gain.setTargetAtTime(SPARKLE_LEVEL * airLevel, now, DEPTH_SMOOTH_S);
     g.rumbleGain.gain.setTargetAtTime(RUMBLE_LEVEL * eased, now, DEPTH_SMOOTH_S);
+    g.deepGain.gain.setTargetAtTime(deepLevel, now, DEPTH_SMOOTH_S);
     g.depthTrim.gain.setTargetAtTime(1 - 0.4 * eased - 0.15 * abyss, now, DEPTH_SMOOTH_S);
     g.noise.playbackRate.setTargetAtTime(1 - 0.07 * eased, now, DEPTH_SMOOTH_S);
   }
@@ -274,6 +368,13 @@ export function createAtmosphereAudio(): AtmosphereAudio {
         osc.frequency.linearRampToValueAtTime(frequency, when + GLIDE_S);
       }
     });
+    chord.deep.forEach((frequency, voice) => {
+      const previousFrequency = previous.deep[voice];
+      if (frequency === previousFrequency) return;
+      const osc = g.deepOscs[voice];
+      osc.frequency.setValueAtTime(previousFrequency, when);
+      osc.frequency.linearRampToValueAtTime(frequency, when + DEEP_GLIDE_S);
+    });
     if (chord.bass !== previous.bass) {
       g.bassOsc.frequency.setValueAtTime(previous.bass, when);
       g.bassOsc.frequency.linearRampToValueAtTime(chord.bass, when + GLIDE_S);
@@ -282,26 +383,45 @@ export function createAtmosphereAudio(): AtmosphereAudio {
 
   function schedulePluck(g: Graph) {
     const start = g.context.currentTime + 0.02;
-    const sounding = PROGRESSION[(chordIndex + PROGRESSION.length - 1) % PROGRESSION.length];
-    const frequency = sounding.keys[Math.floor(Math.random() * sounding.keys.length)] * 2;
+    const frequency = BELL_POOL[Math.floor(Math.random() * BELL_POOL.length)];
     const osc = g.context.createOscillator();
     osc.type = "triangle";
     osc.frequency.value = frequency;
     const envelope = g.context.createGain();
     envelope.gain.value = 0;
     osc.connect(envelope).connect(g.muffleA);
+    envelope.connect(g.bellSend);
     const peak = PLUCK_PEAK * (0.25 + 0.75 * airLevel);
     envelope.gain.setValueAtTime(0.0001, start);
-    envelope.gain.linearRampToValueAtTime(peak, start + 0.01);
+    envelope.gain.linearRampToValueAtTime(peak, start + 0.005);
     envelope.gain.exponentialRampToValueAtTime(0.0001, start + 1.2);
     osc.start(start);
     osc.stop(start + 1.3);
   }
 
+  // A distant bell for the deep world: the sounding chord's root an octave up,
+  // long slow decay, routed through the deep bus so it inherits the pad fade.
+  function scheduleDeepBell(g: Graph) {
+    const start = g.context.currentTime + 0.02;
+    const sounding = PROGRESSION[(chordIndex + PROGRESSION.length - 1) % PROGRESSION.length];
+    const osc = g.context.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = sounding.deep[0] * 2;
+    const envelope = g.context.createGain();
+    envelope.gain.value = 0;
+    osc.connect(envelope).connect(g.deepFilter);
+    envelope.gain.setValueAtTime(0.0001, start);
+    envelope.gain.linearRampToValueAtTime(DEEP_BELL_PEAK, start + 0.08);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, start + 2.8);
+    osc.start(start);
+    osc.stop(start + 2.9);
+  }
+
   // One tick drives everything time-based: chord changes scheduled a beat
   // ahead (so a busy main thread never lands a retune late), sparse rain
-  // plips, vinyl crackle, and occasional octave-up plucks. While the context
-  // is suspended currentTime freezes, so the chord clock holds alignment.
+  // plips, vinyl crackle, occasional octave-up plucks in the air, and rare
+  // bells in the deep. While the context is suspended currentTime freezes,
+  // so the chord clock holds alignment.
   function startTicking(g: Graph) {
     if (tickTimer !== null) return;
     tickTimer = window.setInterval(() => {
@@ -335,7 +455,8 @@ export function createAtmosphereAudio(): AtmosphereAudio {
         gain.linearRampToValueAtTime(peak, now + 0.001);
         gain.exponentialRampToValueAtTime(0.0001, now + (isTick ? 0.003 + Math.random() * 0.004 : 0.016));
       }
-      if (Math.random() < 0.025) schedulePluck(g);
+      if (airLevel > 0.05 && Math.random() < PLUCK_CHANCE * airLevel) schedulePluck(g);
+      if (deepLevel > DEEP_LEVEL * 0.4 && Math.random() < 0.012) scheduleDeepBell(g);
     }, TICK_MS);
   }
 
@@ -369,6 +490,10 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     }, (FADE_OUT_S + 0.2) * 1000);
   }
 
+  function isRunning() {
+    return graph?.context.state === "running" && suspendTimer === null;
+  }
+
   function setDepth(next: number) {
     depth = Math.min(1, Math.max(0, next));
     if (graph) applyDepth(graph);
@@ -387,5 +512,5 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     graph = null;
   }
 
-  return { enable, disable, setDepth, destroy };
+  return { enable, disable, isRunning, setDepth, destroy };
 }

@@ -52,13 +52,35 @@ export default function Atmosphere() {
     };
   }, []);
 
-  // A stored "on" preference still needs a user gesture before audio may
-  // become audible (Chrome autoplay policy), so arm a one-time listener.
+  // Sound defaults ON — only an explicit "off" keeps the site silent. Autoplay
+  // policy still demands a user gesture before audio may become audible, and no
+  // engine counts wheel/scroll as one (Chrome documents its unlock list —
+  // pointer, key, touch — and scroll is excluded everywhere). So the pill
+  // lights immediately (intent) and the qualifying gesture kinds stay armed
+  // until one actually gets the context running (a blocked resume() just stays
+  // pending, so detaching on the first attempt would strand the music).
   useEffect(() => {
-    if (localStorage.getItem(SOUND_KEY) !== "on") return;
-    const resumeOnFirstGesture = () => void enableSound();
-    window.addEventListener("pointerdown", resumeOnFirstGesture, { once: true });
-    return () => window.removeEventListener("pointerdown", resumeOnFirstGesture);
+    if (localStorage.getItem(SOUND_KEY) === "off") return;
+    setSoundOn(true);
+    const events = ["pointerdown", "keydown", "touchend"] as const;
+    let detached = false;
+    const detach = () => {
+      if (detached) return;
+      detached = true;
+      for (const name of events) window.removeEventListener(name, tryStart);
+    };
+    const tryStart = (event: Event) => {
+      // The music pill owns its own clicks — if the armed listener also fired
+      // on them, it would start the audio and the button's toggle handler,
+      // running right after, would see it running and switch it straight off.
+      const target = event.target;
+      if (target instanceof Element && target.closest('[aria-label="Toggle background music"]')) return;
+      // Some engines reject a blocked resume() instead of leaving it pending —
+      // either way the listeners stay armed for the next gesture.
+      void enableSound().then(detach, () => {});
+    };
+    for (const name of events) window.addEventListener(name, tryStart, { passive: true });
+    return detach;
   }, []);
 
   useEffect(() => initSmoothScroll(), []);
@@ -75,6 +97,14 @@ export default function Atmosphere() {
   }, [motionOn]);
 
   function toggleSound() {
+    // A lit pill whose context never started (visitor scrolled, never clicked —
+    // scroll can't unlock audio) means this click is their first qualifying
+    // gesture: START the music they were promised instead of toggling it off.
+    if (soundOn && !audioRef.current?.isRunning()) {
+      localStorage.setItem(SOUND_KEY, "on");
+      void enableSound();
+      return;
+    }
     if (soundOn) {
       audioRef.current?.disable();
       setSoundOn(false);
