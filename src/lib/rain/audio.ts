@@ -5,16 +5,21 @@ export type AtmosphereAudio = {
   destroy: () => void;
 };
 
-const MASTER_LEVEL = 0.55;
+const MASTER_LEVEL = 1.1;
 const FADE_IN_S = 1.2;
 const FADE_OUT_S = 0.6;
 
 // Voicing and underwater values from docs/research/underwater-city/audio-lofi.md:
 // two cascaded master lowpasses sweep 3000 Hz (surface, tape-soft top end) down
-// to 300 Hz (submerged) along an exponential curve — brightness perception is
-// logarithmic, so a linear sweep would bunch all the change at the deep end.
+// to 300 Hz along an exponential curve — brightness perception is logarithmic,
+// so a linear sweep would bunch all the change at the deep end. The full sweep
+// lands by SUBMERGE_DEPTH — the engine's combined depth once the camera is
+// fully underwater (it emits 0.4·submersion + 0.6·page depth) — because the
+// muffle belongs to crossing the waterline; below it the cutoff holds and only
+// depthTrim keeps sinking.
 const MUFFLE_SURFACE_HZ = 3000;
 const MUFFLE_DEEP_HZ = 300;
+const SUBMERGE_DEPTH = 0.4;
 const DEPTH_SMOOTH_S = 0.12;
 
 // Rain sits far behind the music now: a light bed, not the subject.
@@ -137,13 +142,21 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     depthTrim.gain.value = 1;
     const master = context.createGain();
     master.gain.value = 0;
+    // MASTER_LEVEL sits above unity, so stacked chord + gust + pluck peaks
+    // could clip the destination; the limiter shaves only those rare peaks.
+    const limiter = context.createDynamicsCompressor();
+    limiter.threshold.value = -4;
+    limiter.knee.value = 3;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.25;
 
     noise.connect(body).connect(bodyGain).connect(muffleA);
     noise.connect(sparkle).connect(sparkleGain).connect(muffleA);
     noise.connect(patter).connect(patterGain).connect(muffleA);
     noise.connect(crackle).connect(crackleGain).connect(muffleA);
     noise.connect(rumble).connect(rumbleGain).connect(muffleA);
-    muffleA.connect(muffleB).connect(breath).connect(depthTrim).connect(master).connect(context.destination);
+    muffleA.connect(muffleB).connect(breath).connect(depthTrim).connect(master).connect(limiter).connect(context.destination);
 
     const gust = context.createOscillator();
     gust.type = "sine";
@@ -235,14 +248,16 @@ export function createAtmosphereAudio(): AtmosphereAudio {
 
   function applyDepth(g: Graph) {
     const now = g.context.currentTime;
-    const eased = depth * depth * (3 - 2 * depth);
+    const submerge = Math.min(1, depth / SUBMERGE_DEPTH);
+    const eased = submerge * submerge * (3 - 2 * submerge);
+    const abyss = Math.max(0, (depth - SUBMERGE_DEPTH) / (1 - SUBMERGE_DEPTH));
     airLevel = (1 - eased) * (1 - eased);
     const cutoff = MUFFLE_SURFACE_HZ * Math.pow(MUFFLE_DEEP_HZ / MUFFLE_SURFACE_HZ, eased);
     g.muffleA.frequency.setTargetAtTime(cutoff, now, DEPTH_SMOOTH_S);
     g.muffleB.frequency.setTargetAtTime(cutoff, now, DEPTH_SMOOTH_S);
     g.sparkleGain.gain.setTargetAtTime(SPARKLE_LEVEL * airLevel, now, DEPTH_SMOOTH_S);
     g.rumbleGain.gain.setTargetAtTime(RUMBLE_LEVEL * eased, now, DEPTH_SMOOTH_S);
-    g.depthTrim.gain.setTargetAtTime(1 - 0.35 * eased, now, DEPTH_SMOOTH_S);
+    g.depthTrim.gain.setTargetAtTime(1 - 0.4 * eased - 0.15 * abyss, now, DEPTH_SMOOTH_S);
     g.noise.playbackRate.setTargetAtTime(1 - 0.07 * eased, now, DEPTH_SMOOTH_S);
   }
 
