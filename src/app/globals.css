@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 :root {
+  /* This page is dark by design — one palette, no light variant. Declaring it
+     tells browser "auto dark/appearance" features to leave the colors alone:
+     recolorers key off pages that DON'T state a scheme (seen live 2026-08-31:
+     an iOS browser inverted the cards white and sank the headline into the
+     scene, with canvas/images exempt). Also styles UA scrollbars/controls dark. */
+  color-scheme: dark;
   --depth: 0;
   --background: #060b14;
   --surface: #0d1626;
