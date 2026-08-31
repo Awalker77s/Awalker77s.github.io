@@ -1,6 +1,6 @@
 import Atmosphere from "@/components/Atmosphere";
 import ProjectCard from "@/components/ProjectCard";
-import { site, projects, collaboration, experience, education, skillGroups, about } from "@/lib/content";
+import { site, projects, experience, education, skillGroups, about } from "@/lib/content";
 
 function SectionHeading({ index, title }: { index: string; title: string }) {
   return (
@@ -25,7 +25,7 @@ export default function Home() {
             {site.name}
           </a>
           <div className="hidden gap-6 text-sm text-faint md:flex">
-            <a href="#work" className="transition-colors hover:text-foreground">work</a>
+            <a href="#projects" className="transition-colors hover:text-foreground">projects</a>
             <a href="#experience" className="transition-colors hover:text-foreground">experience</a>
             <a href="#skills" className="transition-colors hover:text-foreground">skills</a>
             <a href="#about" className="transition-colors hover:text-foreground">about</a>
@@ -48,10 +48,10 @@ export default function Home() {
           <p className="mt-4 max-w-2xl leading-relaxed text-muted">{site.summary}</p>
           <div className="mt-8 flex flex-wrap gap-4">
             <a
-              href="#work"
+              href="#projects"
               className="rounded-full border border-accent/40 px-5 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/10"
             >
-              See the work ↓
+              See the projects ↓
             </a>
             <a
               href={site.github}
@@ -64,26 +64,12 @@ export default function Home() {
           </div>
         </section>
 
-        <section id="work" className="scroll-mt-20 py-16 md:py-24">
-          <SectionHeading index="01" title="Work" />
+        <section id="projects" className="scroll-mt-20 py-16 md:py-24">
+          <SectionHeading index="01" title="Projects" />
           <div className="mt-8 space-y-8">
             {projects.map((project, index) => (
               <ProjectCard key={project.name} project={project} flip={index % 2 === 1} />
             ))}
-          </div>
-          <div className="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-edge bg-surface-raised px-6 py-5">
-            <p className="max-w-3xl text-sm leading-relaxed text-muted">
-              <span className="font-semibold text-foreground">{collaboration.name} · </span>
-              {collaboration.text}
-            </p>
-            <a
-              href={collaboration.repoUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm font-medium text-accent hover:underline"
-            >
-              GitHub ↗
-            </a>
           </div>
         </section>
 
@@ -107,10 +93,14 @@ export default function Home() {
               </li>
             ))}
           </ol>
-          <div className="mt-10 rounded-xl border border-edge bg-surface p-6">
-            <h3 className="font-semibold text-foreground">{education.degree}</h3>
-            <p className="mt-1 text-sm text-accent">{education.school}</p>
-            <p className="mt-2 text-sm text-muted">{education.detail}</p>
+          <div className="mt-10 grid gap-4 md:grid-cols-2">
+            {education.map((entry) => (
+              <div key={entry.school} className="rounded-xl border border-edge bg-surface p-6">
+                <h3 className="font-semibold text-foreground">{entry.degree}</h3>
+                <p className="mt-1 text-sm text-accent">{entry.school}</p>
+                <p className="mt-2 text-sm text-muted">{entry.detail}</p>
+              </div>
+            ))}
           </div>
         </section>
 
@@ -157,6 +147,14 @@ export default function Home() {
               className="text-muted transition-colors hover:text-accent"
             >
               github.com/Awalker77s ↗
+            </a>
+            <a
+              href={site.linkedin}
+              target="_blank"
+              rel="noreferrer"
+              className="text-muted transition-colors hover:text-accent"
+            >
+              linkedin.com/in/alexander-walker ↗
             </a>
           </div>
         </section>
