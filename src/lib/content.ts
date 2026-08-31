@@ -19,6 +19,7 @@ export const site = {
   summary:
     "Applied AI student at UT Knoxville. I care most about the gap between what AI models can do and what actually gets deployed inside a real business — so I build products that close it, and ship them to real users.",
   email: "awalker200677@gmail.com",
+  phone: "228-357-2131",
   github: "https://github.com/Awalker77s",
   linkedin: "https://www.linkedin.com/in/alexander-walker-8b2694243",
 };
@@ -39,7 +40,7 @@ export const projects: Project[] = [
       "3,500+ automated tests, green — including an adversarial check that sensitive runs have no network rail reachable",
     ],
     stack: ["Electron", "TypeScript", "React", "Chrome MV3", "Windows UIA", "Ollama", "Claude Code"],
-    image: { src: "/projects/drydock.png", alt: "Drydock — automation run timeline with token and cost receipt", width: 1600, height: 1000 },
+    image: { src: "/projects/drydock.png", alt: "Drydock — automation run timeline with token and cost receipt", width: 2000, height: 1030 },
     note: "Private build — ask me for a walkthrough.",
   },
   {
@@ -57,7 +58,7 @@ export const projects: Project[] = [
     stack: ["Node", "Claude Code", "Hooks API", "Zero dependencies"],
     image: {
       src: "/projects/truststack.png",
-      alt: "Lane Console diagram of trust-stack: LOW, MED, and HIGH risk lanes pass through a dashed skills band (28 skills — policy the model reads) into a solid hooks wall (4 hooks — enforcement it cannot skip); LOW auto-merges, MED is allowed, HIGH trips a breaker and bends to human approval, with an append-only ledger rail on the right.",
+      alt: "trust-stack capability grid — STOPS: --no-verify becomes a question; ROUTES: low risk merges, high risk waits; CHECKS: catches bypasses humans miss; REMEMBERS: every decision permanently logged. Flight rules for AI coding agents.",
       width: 1600,
       height: 780,
     },
@@ -75,7 +76,7 @@ export const projects: Project[] = [
       "Loadout economy with an equip/store/workshop hub and a live 3D preview of every move you touch",
     ],
     stack: ["Next.js", "React", "TypeScript", "Three.js", "Tailwind", "Python (CV pipeline)"],
-    image: { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 1000 },
+    image: { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 880 },
     note: "Async tournaments are the next milestone.",
   },
   {
@@ -107,7 +108,7 @@ export const projects: Project[] = [
       "Refuses to answer when the sources don't contain it — no confident hallucination path",
     ],
     stack: ["Python", "PyMuPDF", "Tesseract", "Sentence-Transformers", "FAISS", "OpenAI", "Gradio"],
-    image: { src: "/projects/rag.png", alt: "Document Intelligence — six-stage RAG pipeline architecture", width: 1600, height: 1000 },
+    image: { src: "/projects/rag.png", alt: "Document Intelligence — five-stage RAG pipeline: ingest, chunk, embed, retrieve, generate", width: 1600, height: 1000 },
     repoUrl: "https://github.com/Awalker77s/Document-Intelligence-Pipeline",
   },
   {
@@ -123,7 +124,7 @@ export const projects: Project[] = [
       "The graph you're looking at is the real vault, rendered from its actual wikilinks",
     ],
     stack: ["Obsidian", "Markdown", "Git", "Claude Code"],
-    image: { src: "/projects/brain.png", alt: "Brain — force-directed graph of the real Obsidian vault", width: 1600, height: 1000 },
+    image: { src: "/projects/brain.png", alt: "Brain — force-directed graph of the real vault: 88 notes, 99 links, hubs labeled (Home, Machines, Memory protocol)", width: 1600, height: 1000 },
   },
   {
     name: "Echinoid ID",
@@ -138,7 +139,7 @@ export const projects: Project[] = [
       "3 free IDs, then Stripe-billed Pro",
     ],
     stack: ["TypeScript", "React", "Supabase", "Edge Functions", "OpenAI", "Stripe"],
-    image: { src: "/projects/echinoid.png", alt: "Echinoid ID — fossil identification interface", width: 1600, height: 1000 },
+    image: { src: "/projects/echinoid.png", alt: "Echinoid ID — fossil identification interface", width: 1600, height: 965 },
     liveUrl: "https://echinoid-ui.vercel.app",
   },
   {
@@ -153,7 +154,7 @@ export const projects: Project[] = [
       "Dual-mode data layer — Supabase in production, localStorage for local dev",
     ],
     stack: ["React", "Vite", "Tailwind", "Supabase", "Resend", "Vercel"],
-    image: { src: "/projects/pizza.png", alt: "Mother Truckin' Pizza — menu page", width: 1600, height: 1000 },
+    image: { src: "/projects/pizza.png", alt: "Mother Truckin' Pizza — menu page", width: 1600, height: 765 },
     liveUrl: "https://mother-truckin-pizza.vercel.app",
   },
 ];
@@ -212,8 +213,33 @@ export const skillGroups = [
   },
 ];
 
+// Short labels for the sky blimps' screens — one skill per crossing. Kept
+// under ~19 chars so the baked screen text stays legible; the long-form
+// versions live in skillGroups.
+export const blimpSkills = [
+  "Multi-agent design",
+  "Claude Code",
+  "Orchestration",
+  "Eval harnesses",
+  "Adversarial testing",
+  "Guardrails & HITL",
+  "Context engineering",
+  "RAG pipelines",
+  "OCR pipelines",
+  "Prompt design",
+  "TypeScript",
+  "React / Next.js",
+  "Python",
+  "Node",
+  "Electron",
+  "Three.js",
+  "Supabase",
+  "PostgreSQL",
+  "MCP",
+];
+
 export const about = [
   "I'm an Applied AI student at UT Knoxville, after completing the computer science core at UCF. Most of my time goes into building with AI agents — multi-agent systems, orchestration, and the trust layers that make their output safe to ship. Everything on this page is a real build: live users, a real paying client, real captured footage, real test suites.",
   "The thread through all of it is verification. \"The demo worked\" doesn't convince me — I want evals with blinded graders, guardrails that fail closed, evidence ledgers that can't be faked, and honest numbers even when they're unflattering. The gap between what a model can do and what a business will actually deploy is exactly the gap those things close.",
-  "This site is part of the portfolio too. The rain, the city, and the water are a custom canvas engine — a spring-column water surface with real ripple physics — and the soundtrack is synthesized live in the Web Audio API: a bright lofi bed at the surface that crossfades into open-fifth deep-water pads as you scroll into the descent. No animation libraries, no audio files.",
+  "This site is part of the portfolio too. The rain, the city, and the water are a custom canvas engine — a spring-column water surface with real ripple physics — and the soundtrack is synthesized live in the Web Audio API: a bright bed at the surface that crossfades into a swung lofi beat under warm pads once you dive, with a synthesized splash at the waterline. No animation libraries, no audio files.",
 ];
