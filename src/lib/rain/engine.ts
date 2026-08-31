@@ -200,6 +200,10 @@ export function createRainEngine(
   const mutableWindows: MutableWindow[] = [];
   const beacons: Beacon[] = [];
   const glintXs: number[] = [];
+  // Colored light sources whose glow lies on the water as shimmering streaks —
+  // baked positions (billboards, promenade lamps); live sources (hero signs,
+  // beacons, spire tip) are read from their own arrays at draw time.
+  const waterLights: { x: number; rgb: string; strength: number; phase: number }[] = [];
   const cars: Car[] = [];
   const flakes: Flake[] = [];
   const bubbles: Bubble[] = [];
@@ -546,6 +550,7 @@ export function createRainEngine(
     mutableWindows.length = 0;
     beacons.length = 0;
     glintXs.length = 0;
+    waterLights.length = 0;
     cars.length = 0;
     const clusterX = width * (0.25 + rand() * 0.5);
 
@@ -628,6 +633,7 @@ export function createRainEngine(
       mid.ctx.restore();
       mid.ctx.fillStyle = `rgba(${NEON_CORE}, 0.5)`;
       mid.ctx.fillRect(bx + 1, by + 1, bw - 2, 1);
+      waterLights.push({ x: bx + bw / 2, rgb, strength: 0.5, phase: rand() * Math.PI * 2 });
     }
     const byHeight = [...midBuildings].sort((a, b) => b.h - a.h);
     const antennaCount = Math.max(1, Math.floor(byHeight.length * 0.15));
@@ -761,6 +767,9 @@ export function createRainEngine(
       shore.ctx.fillRect(px - 10, 0, 20, 14);
       shore.ctx.fillStyle = `rgba(${NEON_AMBER}, 0.9)`;
       shore.ctx.fillRect(px - 0.8, 2.5, 1.6, 1.6);
+      // Street lamps sit right over the quay, so they throw the strongest
+      // color onto the water below.
+      waterLights.push({ x: px, rgb: NEON_AMBER, strength: 0.7, phase: rand() * Math.PI * 2 });
       px += 70 + rand() * 110;
     }
     shore.ctx.fillStyle = `rgba(${NEON_CYAN}, 0.5)`;
@@ -809,6 +818,15 @@ export function createRainEngine(
       lastX = x;
     }
     glintXs.length = write;
+
+    // Phones get a thinned, evenly spread light set — the streak pass is the
+    // whole reflection story there (the column-blit sprite is desktop-only).
+    const maxLights = isMobile ? 9 : 24;
+    if (waterLights.length > maxLights) {
+      const stride = waterLights.length / maxLights;
+      for (let i = 0; i < maxLights; i++) waterLights[i] = waterLights[Math.floor(i * stride)];
+      waterLights.length = maxLights;
+    }
 
     const flakeCount = Math.round(Math.min(90, Math.max(28, (width / 1440) * 70)));
     flakes.length = 0;
@@ -1268,6 +1286,45 @@ export function createRainEngine(
         const i = columnAt(x + colW * 0.5);
         const top = surfaceYs[i] + (heights[i] + swellAt(x, 1, 0.4)) * 0.6;
         ctx.drawImage(reflectionSprite, x * scale, 0, colW * scale, reflectionSprite.height, x, top, colW, srcH);
+      }
+      ctx.restore();
+    }
+
+    // Neon bleed: every bright source lays a shimmering colored streak on the
+    // water — the reflection of the LIGHTS, where the sprite above mirrors the
+    // architecture. Additive blend so overlapping colors bloom; each streak
+    // rides its column's surface and sways/breathes on its own phase. Runs on
+    // mobile too (cheap), where it is the only reflection layer.
+    if (submerge < 0.6) {
+      const fade = 1 - submerge / 0.6;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const drawStreak = (x: number, rgb: string, strength: number, phase: number) => {
+        if (strength < 0.03 || x < 2 || x > width - 2) return;
+        const i = columnAt(x);
+        const displacement = surfaceYs[i] - waterRest;
+        const sway = Math.sin(sceneTime * 1.7 + phase);
+        const top = surfaceYs[i] + 1.5;
+        const len =
+          (22 + strength * 60) * (1 + 0.25 * Math.sin(sceneTime * 0.9 + phase * 1.7)) +
+          Math.abs(displacement) * 0.8;
+        const alpha = strength * fade * (0.26 + 0.14 * (0.5 + 0.5 * sway));
+        const streak = ctx.createLinearGradient(0, top, 0, top + len);
+        streak.addColorStop(0, `rgba(${rgb}, ${alpha})`);
+        streak.addColorStop(1, `rgba(${rgb}, 0)`);
+        ctx.fillStyle = streak;
+        const streakW = 2 + strength * 2.4;
+        ctx.fillRect(x - streakW / 2 + sway * 1.2, top, streakW, len);
+      };
+      for (const light of waterLights) drawStreak(light.x, light.rgb, light.strength, light.phase);
+      for (const sign of billboards) drawStreak(sign.x + sign.w / 2, sign.rgb, 0.9 * sign.on, sign.x * 0.1);
+      for (const beacon of beacons) {
+        const pulse = 0.15 + 0.35 * (0.5 + 0.5 * Math.sin((Math.PI * 2 * sceneTime) / beacon.period + beacon.phase));
+        drawStreak(beacon.x, SURFACE_GLOW, pulse * 1.2, beacon.phase);
+      }
+      if (spire) {
+        const pulse = 0.22 + 0.4 * (0.5 + 0.5 * Math.sin((Math.PI * 2 * sceneTime) / 6));
+        drawStreak(spire.x, NEON_AMBER, pulse, 1.3);
       }
       ctx.restore();
     }
