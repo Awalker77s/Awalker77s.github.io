@@ -23,7 +23,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # npm install, not npm ci: the lockfile is generated on Windows and npm
+      # omits Linux-only optional-dep entries (@emnapi/* under tailwind oxide),
+      # which makes npm ci's strict sync check fail on the ubuntu runner.
+      - run: npm install --no-audit --no-fund
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
