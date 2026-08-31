@@ -12,21 +12,28 @@ const FADE_OUT_S = 0.6;
 
 // Voicing and underwater values from docs/research/underwater-city/audio-lofi.md:
 // two cascaded master lowpasses sweep 3000 Hz (surface, tape-soft top end) down
-// to 300 Hz along an exponential curve — brightness perception is logarithmic,
+// to 700 Hz along an exponential curve — brightness perception is logarithmic,
 // so a linear sweep would bunch all the change at the deep end. The full sweep
 // lands by SUBMERGE_DEPTH — the engine's combined depth once the camera is
 // fully underwater (it emits 0.4·submersion + 0.6·page depth) — because the
 // muffle belongs to crossing the waterline; below it the cutoff holds and only
 // depthTrim keeps sinking.
 //
-// Since the uplift pass, the muffle only governs the SURFACE world (rain +
-// bright keys + plucks). A second, deep world — open fifth/octave pads with no
-// thirds, native to the water — bypasses the muffle and swells in as the
-// surface world fades, so descending reads as a mood change, not a volume dip.
-// The bass sits below the 300 Hz floor and carries through the waterline in
+// The muffle only governs the SURFACE world (rain + bright keys + plucks).
+// The DEEP world bypasses it and swells in as the surface fades, so descending
+// reads as a mood change, not a volume dip. Underwater scores that people
+// love (Abzû, Journey, Subnautica's surface-to-reef transitions) never reach
+// for a brutal lowpass alone — they trade brightness for SPACE. So the deep
+// world here is: detuned pad pairs breathing under a wobbling filter, two
+// high diatonic color voices that keep a little "magic" above the pads,
+// occasional inharmonic bells on their own unmuffled bus, and a comb-network
+// reverb that gives the whole thing somewhere to echo. The 700 Hz floor (up
+// from an earlier 300) keeps enough voice in the muffled surface remnant
+// that the crossfade never feels like drowning.
+// The bass sits below the muffle floor and carries through the waterline in
 // both worlds, which is what keeps the crossfade feeling continuous.
 const MUFFLE_SURFACE_HZ = 3000;
-const MUFFLE_DEEP_HZ = 300;
+const MUFFLE_DEEP_HZ = 700;
 const SUBMERGE_DEPTH = 0.4;
 const DEPTH_SMOOTH_S = 0.12;
 
@@ -39,8 +46,8 @@ const KEYS_LEVEL = 0.32;
 const BASS_LEVEL = 0.25;
 const PLUCK_PEAK = 0.09;
 const PLUCK_CHANCE = 0.04;
-const DEEP_LEVEL = 0.34;
-const DEEP_BELL_PEAK = 0.05;
+const DEEP_LEVEL = 0.32;
+const ABYSS_BELL_BUS_LEVEL = 0.2;
 const CHORD_S = 7;
 const GLIDE_S = 0.12;
 // Deep pad voices take whole seconds to arrive at each new chord — underwater
@@ -49,10 +56,11 @@ const DEEP_GLIDE_S = 1.6;
 const LOOKAHEAD_S = 1.2;
 const TICK_MS = 125;
 
-// C major pentatonic, C5–C6 — every note sits inside all four chords of the
-// loop, so the bell line can wander freely without ever landing wrong. A
-// sparse high pentatonic top-line is the clearest "hopeful" signal the bed
-// has (game-audio vertical-layering literature is unanimous on this one).
+// C major pentatonic, C5–C6 — every note is at worst a mild color tone
+// against every chord in the loop (no tritone or semitone lands anywhere),
+// so the bell line can wander freely without ever sounding wrong. A sparse
+// high pentatonic top-line is the clearest "hopeful" signal the bed has
+// (game-audio vertical-layering literature is unanimous on this one).
 const BELL_POOL = [523.25, 587.33, 659.26, 783.99, 880.0, 1046.5];
 
 // Cmaj9 → Fmaj9 → Am11 → G(add9) — the I–IV–vi–V loop in C major, voiced a
@@ -71,6 +79,26 @@ const VOICE_LEVELS = [0.24, 0.22, 0.2, 0.17];
 // The deep pad swells per voice on offset LFOs so it breathes like a current.
 const DEEP_VOICE_LEVELS = [0.34, 0.26, 0.2];
 const DEEP_SWELL_HZ = [0.05, 0.062, 0.077];
+// Each deep pad voice is a ±7-cent pair — the slow beat between the pair is
+// what turns a plain sine into "shimmer" without adding any brightness.
+const DEEP_DETUNE_CENTS = 7;
+// Two high color voices ride above the pads (maj7 / 9th of the sounding
+// chord, octave-up register): quiet, but they are the "magic" that keeps the
+// deep from being only darkness. Indexed in step with PROGRESSION.
+const COLOR_VOICES = [
+  [493.88, 587.33], // Cmaj9  -> B4, D5
+  [659.26, 392.0], //  Fmaj9  -> E5, G4
+  [392.0, 493.88], //  Am11   -> G4, B4
+  [440.0, 587.33], //  Gadd9  -> A4, D5
+];
+const COLOR_LEVELS = [0.12, 0.1];
+// Comb-network reverb (four parallel feedback delays at mutually-prime-ish
+// lengths, each damped by its own lowpass). Not a true FDN — no mixing
+// matrix — but at 0.28 wet under a pad bed the difference doesn't survive.
+const REVERB_DELAYS_S = [0.347, 0.419, 0.523, 0.613];
+const REVERB_FEEDBACK = [0.42, 0.4, 0.37, 0.35];
+const REVERB_DAMP_HZ = 2500;
+const REVERB_WET = 0.28;
 
 type Graph = {
   context: AudioContext;
@@ -84,11 +112,13 @@ type Graph = {
   muffleB: BiquadFilterNode;
   deepFilter: BiquadFilterNode;
   deepGain: GainNode;
+  abyssBellBus: GainNode;
   bellSend: DelayNode;
   depthTrim: GainNode;
   master: GainNode;
   keysOscs: OscillatorNode[];
   deepOscs: OscillatorNode[];
+  colorOscs: OscillatorNode[];
   bassOsc: OscillatorNode;
 };
 
@@ -137,6 +167,7 @@ export function createAtmosphereAudio(): AtmosphereAudio {
   let deepLevel = 0;
   let chordIndex = 1;
   let nextChordTime = 0;
+  let nextAbyssBellAt = 0;
 
   function buildGraph(): Graph {
     const context = new AudioContext();
@@ -260,16 +291,23 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     bellSend.connect(bellFeedback).connect(bellSend);
     bellSend.connect(bellWet).connect(muffleA);
 
-    // The deep world: one sine per pad voice, open fifths and octaves only —
-    // no thirds, so it reads as vast rather than sad. It joins the chain AFTER
-    // the muffle (the pads are native to the water; muffling them too would
-    // just be a second volume knob) but before depthTrim, so the whole mix
-    // still settles as you sink. Its own fixed lowpass keeps it felt more
-    // than heard.
+    // The deep world: open fifths and octaves only — no thirds, so it reads
+    // as vast rather than sad. It joins the chain AFTER the muffle (the pads
+    // are native to the water; muffling them too would just be a second
+    // volume knob) but before depthTrim, so the whole mix still settles as
+    // you sink. Its own lowpass keeps the pads felt more than heard, and a
+    // very slow ±50 Hz wobble on that cutoff makes the darkness itself move.
     const deepFilter = lowpass(context, 850, 0.5);
     const deepGain = context.createGain();
     deepGain.gain.value = 0;
     deepFilter.connect(deepGain).connect(breath);
+
+    const deepWobble = context.createOscillator();
+    deepWobble.type = "sine";
+    deepWobble.frequency.value = 0.05;
+    const deepWobbleDepth = context.createGain();
+    deepWobbleDepth.gain.value = 50;
+    deepWobble.connect(deepWobbleDepth).connect(deepFilter.frequency);
 
     const deepWow = context.createOscillator();
     deepWow.type = "sine";
@@ -278,18 +316,23 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     deepWowDepth.gain.value = 6;
     deepWow.connect(deepWowDepth);
 
+    // Pad voices as ±7-cent pairs; each pair shares a swell LFO so the two
+    // halves breathe together while beating against each other.
     const deepOscs: OscillatorNode[] = [];
     const deepSwells: OscillatorNode[] = [];
     PROGRESSION[0].deep.forEach((frequency, voice) => {
       const voiceGain = context.createGain();
       voiceGain.gain.value = DEEP_VOICE_LEVELS[voice];
       voiceGain.connect(deepFilter);
-      const osc = context.createOscillator();
-      osc.type = "sine";
-      osc.frequency.value = frequency;
-      deepWowDepth.connect(osc.detune);
-      osc.connect(voiceGain);
-      deepOscs.push(osc);
+      for (const detune of [DEEP_DETUNE_CENTS, -DEEP_DETUNE_CENTS]) {
+        const osc = context.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = frequency;
+        osc.detune.value = detune;
+        deepWowDepth.connect(osc.detune);
+        osc.connect(voiceGain);
+        deepOscs.push(osc);
+      }
       const swell = context.createOscillator();
       swell.type = "sine";
       swell.frequency.value = DEEP_SWELL_HZ[voice];
@@ -299,15 +342,59 @@ export function createAtmosphereAudio(): AtmosphereAudio {
       deepSwells.push(swell);
     });
 
+    // High color voices — through the deep bus so they inherit its fade, but
+    // quiet enough to read as light from the surface, not melody.
+    const colorOscs: OscillatorNode[] = [];
+    COLOR_VOICES[0].forEach((frequency, voice) => {
+      const voiceGain = context.createGain();
+      voiceGain.gain.value = COLOR_LEVELS[voice];
+      voiceGain.connect(deepFilter);
+      const osc = context.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = frequency;
+      deepWowDepth.connect(osc.detune);
+      osc.connect(voiceGain);
+      colorOscs.push(osc);
+    });
+
+    // Abyssal bells bypass the deep lowpass on their own bus — their upper
+    // partials are the one bright thing underwater, which is exactly why
+    // they read as distant and holy rather than muffled.
+    const abyssBellBus = context.createGain();
+    abyssBellBus.gain.value = ABYSS_BELL_BUS_LEVEL;
+    abyssBellBus.connect(breath);
+
+    // Comb-network reverb fed by the deep world (pads post-fade + bells):
+    // the wet return joins at depthTrim so the echo still settles with depth.
+    const reverbIn = context.createGain();
+    reverbIn.gain.value = 1;
+    deepGain.connect(reverbIn);
+    abyssBellBus.connect(reverbIn);
+    const reverbWet = context.createGain();
+    reverbWet.gain.value = REVERB_WET;
+    reverbWet.connect(depthTrim);
+    REVERB_DELAYS_S.forEach((seconds, i) => {
+      const delay = context.createDelay(1);
+      delay.delayTime.value = seconds;
+      const damp = lowpass(context, REVERB_DAMP_HZ, 0.5);
+      const feedback = context.createGain();
+      feedback.gain.value = REVERB_FEEDBACK[i];
+      reverbIn.connect(delay);
+      delay.connect(damp).connect(feedback).connect(delay);
+      delay.connect(reverbWet);
+    });
+
     noise.start();
     gust.start();
     breathLfo.start();
     wow.start();
     tremolo.start();
     bassOsc.start();
+    deepWobble.start();
     deepWow.start();
     for (const osc of keysOscs) osc.start();
     for (const osc of deepOscs) osc.start();
+    for (const osc of colorOscs) osc.start();
     for (const osc of deepSwells) osc.start();
 
     chordIndex = 1;
@@ -325,11 +412,13 @@ export function createAtmosphereAudio(): AtmosphereAudio {
       muffleB,
       deepFilter,
       deepGain,
+      abyssBellBus,
       bellSend,
       depthTrim,
       master,
       keysOscs,
       deepOscs,
+      colorOscs,
       bassOsc,
     };
     applyDepth(built);
@@ -342,8 +431,9 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     const eased = submerge * submerge * (3 - 2 * submerge);
     const abyss = Math.max(0, (depth - SUBMERGE_DEPTH) / (1 - SUBMERGE_DEPTH));
     airLevel = (1 - eased) * (1 - eased);
-    // Equal-power-ish fade-in for the pads: sin curve against the muffle's
-    // fade-out of the bright keys, with a small extra lift toward the abyss.
+    // Pads fade in on a sin curve while the surface world's level falls on a
+    // squared curve — not a matched equal-power pair, but close enough that
+    // the crossfade holds perceived loudness. Small extra lift in the abyss.
     deepLevel = DEEP_LEVEL * Math.sin((Math.PI / 2) * eased) * (0.85 + 0.15 * abyss);
     const cutoff = MUFFLE_SURFACE_HZ * Math.pow(MUFFLE_DEEP_HZ / MUFFLE_SURFACE_HZ, eased);
     g.muffleA.frequency.setTargetAtTime(cutoff, now, DEPTH_SMOOTH_S);
@@ -371,8 +461,17 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     chord.deep.forEach((frequency, voice) => {
       const previousFrequency = previous.deep[voice];
       if (frequency === previousFrequency) return;
-      const osc = g.deepOscs[voice];
-      osc.frequency.setValueAtTime(previousFrequency, when);
+      for (const osc of [g.deepOscs[voice * 2], g.deepOscs[voice * 2 + 1]]) {
+        osc.frequency.setValueAtTime(previousFrequency, when);
+        osc.frequency.linearRampToValueAtTime(frequency, when + DEEP_GLIDE_S);
+      }
+    });
+    const colors = COLOR_VOICES[index];
+    const previousColors = COLOR_VOICES[(index + COLOR_VOICES.length - 1) % COLOR_VOICES.length];
+    colors.forEach((frequency, voice) => {
+      if (frequency === previousColors[voice]) return;
+      const osc = g.colorOscs[voice];
+      osc.frequency.setValueAtTime(previousColors[voice], when);
       osc.frequency.linearRampToValueAtTime(frequency, when + DEEP_GLIDE_S);
     });
     if (chord.bass !== previous.bass) {
@@ -399,22 +498,34 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     osc.stop(start + 1.3);
   }
 
-  // A distant bell for the deep world: the sounding chord's root an octave up,
-  // long slow decay, routed through the deep bus so it inherits the pad fade.
-  function scheduleDeepBell(g: Graph) {
+  // An abyssal bell: three inharmonic partials (1 : 2.76 : 5.4 — roughly a
+  // struck bar's overtones, deliberately NOT a harmonic series so it sounds
+  // like an object, not a note), 8 ms strike, each partial decaying on its
+  // own clock with the fundamental ringing longest. Rooted on the sounding
+  // chord an octave up so it always lands inside the harmony. Routed to the
+  // unmuffled bell bus; the reverb network is what turns it into distance.
+  function scheduleAbyssBell(g: Graph) {
     const start = g.context.currentTime + 0.02;
     const sounding = PROGRESSION[(chordIndex + PROGRESSION.length - 1) % PROGRESSION.length];
-    const osc = g.context.createOscillator();
-    osc.type = "sine";
-    osc.frequency.value = sounding.deep[0] * 2;
-    const envelope = g.context.createGain();
-    envelope.gain.value = 0;
-    osc.connect(envelope).connect(g.deepFilter);
-    envelope.gain.setValueAtTime(0.0001, start);
-    envelope.gain.linearRampToValueAtTime(DEEP_BELL_PEAK, start + 0.08);
-    envelope.gain.exponentialRampToValueAtTime(0.0001, start + 2.8);
-    osc.start(start);
-    osc.stop(start + 2.9);
+    const root = sounding.deep[0] * 2;
+    const partials: Array<[ratio: number, peak: number, decayS: number]> = [
+      [1, 0.32, 5 + Math.random()],
+      [2.76, 0.14, 3 + Math.random()],
+      [5.4, 0.06, 2 + Math.random()],
+    ];
+    for (const [ratio, peak, decayS] of partials) {
+      const osc = g.context.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = root * ratio;
+      const envelope = g.context.createGain();
+      envelope.gain.value = 0;
+      osc.connect(envelope).connect(g.abyssBellBus);
+      envelope.gain.setValueAtTime(0.0001, start);
+      envelope.gain.linearRampToValueAtTime(peak, start + 0.008);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, start + decayS);
+      osc.start(start);
+      osc.stop(start + decayS + 0.1);
+    }
   }
 
   // One tick drives everything time-based: chord changes scheduled a beat
@@ -456,7 +567,16 @@ export function createAtmosphereAudio(): AtmosphereAudio {
         gain.exponentialRampToValueAtTime(0.0001, now + (isTick ? 0.003 + Math.random() * 0.004 : 0.016));
       }
       if (airLevel > 0.05 && Math.random() < PLUCK_CHANCE * airLevel) schedulePluck(g);
-      if (deepLevel > DEEP_LEVEL * 0.4 && Math.random() < 0.012) scheduleDeepBell(g);
+      // Abyssal bells keep a timed cadence (one every ~8–20 s) rather than a
+      // per-tick dice roll — a bell is an event, and two in quick succession
+      // reads as a glitch. While near the surface the next strike keeps
+      // re-arming a few seconds out, so descending is followed by one soon.
+      if (deepLevel <= DEEP_LEVEL * 0.4) {
+        nextAbyssBellAt = now + 5 + Math.random() * 6;
+      } else if (now >= nextAbyssBellAt) {
+        scheduleAbyssBell(g);
+        nextAbyssBellAt = now + 8 + Math.random() * 12;
+      }
     }, TICK_MS);
   }
 
