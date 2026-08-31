@@ -1108,23 +1108,27 @@ export function createRainEngine(
     bubbles.length = write;
   }
 
-  // Camera model: the first ~0.9 viewport of scroll dips the eye below the
-  // surface; the rest of the page maps to depth 0 -> 1 (abyss at the footer).
-  // No easing here of ANY kind — wheel smoothing already lives in
-  // src/lib/scroll.ts, and the mapping must stay LINEAR in scrollY: the total
-  // camera travel (~0.88·h + 26px) over 0.9·h of scroll is ~1:1 with the page,
-  // so the surface rides with the text. A smoothstep here (tried) makes the
-  // water sit still near the top while the text moves, then outrun it 1.5×
-  // mid-dip — the "doesn't flow with the words" complaint.
+  // Camera model: the scene is ANCHORED TO THE DOCUMENT — cameraY equals
+  // scrollY exactly (capped once the surface has fully left the frame), so the
+  // skyline scrolls as if it were part of the hero markup: a building sitting
+  // between the words at scroll 0 stays under those words the whole way down
+  // (operator spec 2026-08-31: "it should be the same as the text… stay same
+  // place"). No easing and no scale factor of ANY kind — wheel smoothing
+  // already lives in src/lib/scroll.ts, and even the previous ~0.975 linear
+  // ratio read as the scene slipping against the text. Depth/audio still map
+  // off the same 0.9-viewport submerge range below.
   function updateDepth() {
     const submergeRange = Math.max(height * 0.9, 1);
     submerge = clamp01(scrollYCached / submergeRange);
     depth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
-    // Margin covers physics chop + the additive swell so no crest peeks back
-    // into frame at full submerge. Scale-invariant: max swell amplitude is
-    // 0.12 of the water band, which grows with viewport height (a fixed
-    // margin was mathematically exceeded above ~1310px-tall viewports).
-    cameraY = submerge * (waterRest + MAX_WAVE_HEIGHT + height * WATER_FRACTION * 0.12 + 8);
+    // Cap margin covers physics chop + the additive swell so no crest peeks
+    // back into frame once fully submerged. Scale-invariant: max swell
+    // amplitude is 0.12 of the water band, which grows with viewport height
+    // (a fixed margin was mathematically exceeded above ~1310px viewports).
+    // scrollY < 0 (iOS rubber-band) rides through 1:1 like everything else —
+    // the undrawn strip above the sky is the canvas base coat, same color as
+    // SKY_TOP, so the bounce is seamless.
+    cameraY = Math.min(scrollYCached, waterRest + MAX_WAVE_HEIGHT + height * WATER_FRACTION * 0.12 + 8);
     if (onDepth) {
       const combined = clamp01(submerge * 0.4 + depth * 0.6);
       if (lastEmittedDepth < 0 || Math.abs(combined - lastEmittedDepth) > 0.003) {
