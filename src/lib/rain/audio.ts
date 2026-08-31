@@ -68,11 +68,14 @@ const BELL_POOL = [523.25, 587.33, 659.26, 783.99, 880.0, 1046.5];
 // and hopeful instead of ominous. The vi is voiced WITHOUT its minor third
 // (G B D E over A) so even the minor stop stays open. Voice-led: three of the
 // four voices move by step; the top voice glides a gentle third.
+// Deep pads sit an octave up from their first voicing (sub-200 Hz pads read
+// as dread; 250-500 Hz reads as warm Rhodes-adjacent lofi). The bass keeps
+// the low anchor, so the register lift costs no foundation.
 const PROGRESSION = [
-  { bass: 65.41, keys: [196.0, 246.94, 293.66, 329.63], deep: [130.81, 196.0, 261.63] },
-  { bass: 87.31, keys: [220.0, 261.63, 329.63, 392.0], deep: [130.81, 174.61, 261.63] },
-  { bass: 110.0, keys: [196.0, 246.94, 293.66, 329.63], deep: [110.0, 164.81, 220.0] },
-  { bass: 98.0, keys: [220.0, 246.94, 293.66, 392.0], deep: [98.0, 146.83, 196.0] },
+  { bass: 65.41, keys: [196.0, 246.94, 293.66, 329.63], deep: [261.63, 392.0, 523.25] },
+  { bass: 87.31, keys: [220.0, 261.63, 329.63, 392.0], deep: [261.63, 349.23, 523.25] },
+  { bass: 110.0, keys: [196.0, 246.94, 293.66, 329.63], deep: [220.0, 329.63, 440.0] },
+  { bass: 98.0, keys: [220.0, 246.94, 293.66, 392.0], deep: [196.0, 293.66, 392.0] },
 ];
 // Higher voices read louder at equal gain, so the stack tapers upward.
 const VOICE_LEVELS = [0.24, 0.22, 0.2, 0.17];
@@ -95,10 +98,41 @@ const COLOR_LEVELS = [0.12, 0.1];
 // Comb-network reverb (four parallel feedback delays at mutually-prime-ish
 // lengths, each damped by its own lowpass). Not a true FDN — no mixing
 // matrix — but at 0.28 wet under a pad bed the difference doesn't survive.
-const REVERB_DELAYS_S = [0.347, 0.419, 0.523, 0.613];
-const REVERB_FEEDBACK = [0.42, 0.4, 0.37, 0.35];
-const REVERB_DAMP_HZ = 2500;
-const REVERB_WET = 0.28;
+// Shorter, warmer, darker-tailed room (the earlier 0.35-0.61s cavern read as
+// portentous — a lofi beat wants a small room, not a cathedral).
+const REVERB_DELAYS_S = [0.21, 0.27, 0.33, 0.39];
+const REVERB_FEEDBACK = [0.3, 0.28, 0.26, 0.24];
+const REVERB_DAMP_HZ = 1800;
+const REVERB_WET = 0.17;
+
+// ——— The deep beat ———
+// Underwater is a lofi groove, not dark ambient. The grid derives from the
+// chord clock (CHORD_S/16 per eighth = 2 bars of 4/4 per chord, ≈68.6 BPM
+// half-time feel — squarely Dilla/Nujabes territory), so beat and harmony
+// stay phase-locked forever with no second clock to drift. Hits are ephemeral
+// nodes like the plucks; loudness tracks deepLevel and hard-gates on abyss
+// progress, so the surface stays beatless and the kit only enters once the
+// muffle crossfade has fully finished.
+const DRUM_EIGHTH_S = CHORD_S / 16;
+const DRUM_KICK_PEAK = 0.16;
+const DRUM_SNARE_NOISE_PEAK = 0.1;
+const DRUM_SNARE_BODY_PEAK = 0.04;
+const DRUM_HAT_PEAK = 0.035;
+// 58% swing: odd (upbeat) eighths land this late. Carried almost entirely by
+// the hats — the kick/snare pattern below avoids odd steps.
+const DRUM_SWING_S = DRUM_EIGHTH_S * 2 * 0.08;
+const DRUM_FADE_ABYSS = 0.15;
+const DRUM_DUCK_DEPTH = 0.55;
+const DRUM_DUCK_RELEASE_TC = 0.06;
+// 16-step grid (2 bars): kick on beat 1 + the "and" of 3, backbeat snare.
+const KICK_STEPS: Record<number, number> = { 0: 1, 5: 0.85, 8: 1, 13: 0.85 };
+const SNARE_STEPS: Record<number, number> = { 2: 1, 6: 1, 10: 1, 14: 1 };
+
+// Waterline one-shots: the plunge/breach ARE the crossing, so they bypass the
+// muffle AND depthTrim (whose live depth automation would wobble a
+// hand-authored envelope mid-scroll) and join at master — still limited.
+const WATERLINE_HYST = 0.02;
+const WATERLINE_COOLDOWN_S = 1;
 
 type Graph = {
   context: AudioContext;
@@ -113,6 +147,12 @@ type Graph = {
   deepFilter: BiquadFilterNode;
   deepGain: GainNode;
   abyssBellBus: GainNode;
+  drumSum: GainNode;
+  snareReverbSend: GainNode;
+  duckGain: GainNode;
+  transitionBus: GainNode;
+  pinkBuffer: AudioBuffer;
+  whiteBuffer: AudioBuffer;
   bellSend: DelayNode;
   depthTrim: GainNode;
   master: GainNode;
@@ -168,13 +208,25 @@ export function createAtmosphereAudio(): AtmosphereAudio {
   let chordIndex = 1;
   let nextChordTime = 0;
   let nextAbyssBellAt = 0;
+  let abyss = 0;
+  let drumEighthIndex = 0;
+  let nextDrumEighth = 0;
+  let waterlineSide: "above" | "below" | null = null;
+  let bandEnteredAt = 0;
+  let lastWaterlineFireAt = -Infinity;
 
   function buildGraph(): Graph {
     const context = new AudioContext();
 
     const noise = context.createBufferSource();
-    noise.buffer = pinkNoiseBuffer(context);
+    const pinkBuffer = pinkNoiseBuffer(context);
+    noise.buffer = pinkBuffer;
     noise.loop = true;
+    // White noise for the drum kit's snare/hats (pink is too dull up top);
+    // shared read-only across every per-hit AudioBufferSourceNode.
+    const whiteBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+    const whiteData = whiteBuffer.getChannelData(0);
+    for (let i = 0; i < whiteData.length; i++) whiteData[i] = Math.random() * 2 - 1;
 
     const body = lowpass(context, 1400, 0.6);
     const bodyGain = context.createGain();
@@ -295,18 +347,24 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     // as vast rather than sad. It joins the chain AFTER the muffle (the pads
     // are native to the water; muffling them too would just be a second
     // volume knob) but before depthTrim, so the whole mix still settles as
-    // you sink. Its own lowpass keeps the pads felt more than heard, and a
-    // very slow ±50 Hz wobble on that cutoff makes the darkness itself move.
-    const deepFilter = lowpass(context, 850, 0.5);
+    // you sink. The 1400 Hz ceiling (up from a darker 850) keeps cozy
+    // AM-radio midrange presence; the slow cutoff wobble reads as breathing.
+    // The dry pad path runs through duckGain so each kick can pump it a
+    // little (sidechain feel) — the reverb send taps BEFORE the duck so the
+    // tail stays continuous instead of stuttering.
+    const deepFilter = lowpass(context, 1400, 0.5);
     const deepGain = context.createGain();
     deepGain.gain.value = 0;
-    deepFilter.connect(deepGain).connect(breath);
+    const duckGain = context.createGain();
+    duckGain.gain.value = 1;
+    deepFilter.connect(deepGain);
+    deepGain.connect(duckGain).connect(breath);
 
     const deepWobble = context.createOscillator();
     deepWobble.type = "sine";
     deepWobble.frequency.value = 0.05;
     const deepWobbleDepth = context.createGain();
-    deepWobbleDepth.gain.value = 50;
+    deepWobbleDepth.gain.value = 35;
     deepWobble.connect(deepWobbleDepth).connect(deepFilter.frequency);
 
     const deepWow = context.createOscillator();
@@ -384,6 +442,28 @@ export function createAtmosphereAudio(): AtmosphereAudio {
       delay.connect(reverbWet);
     });
 
+    // Drum kit bus: kick/snare/hats sum here, pass through one static tanh
+    // soft-clip (tape saturation so synth drums don't read as too clean) and
+    // join at breath — parallel to the pad bus, bypassing deepFilter (whose
+    // 1400 Hz ceiling would gut the hats). Snare alone taps a small reverb
+    // send; kick and hats stay dry and tight.
+    const drumSum = context.createGain();
+    drumSum.gain.value = 1;
+    const shaper = context.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < curve.length; i++) curve[i] = Math.tanh(1.7 * ((i / (curve.length - 1)) * 2 - 1));
+    shaper.curve = curve;
+    shaper.oversample = "2x";
+    drumSum.connect(shaper).connect(breath);
+    const snareReverbSend = context.createGain();
+    snareReverbSend.gain.value = 0.2;
+    snareReverbSend.connect(reverbIn);
+
+    // Waterline one-shot bus: joins at master (see constants above).
+    const transitionBus = context.createGain();
+    transitionBus.gain.value = 1;
+    transitionBus.connect(master);
+
     noise.start();
     gust.start();
     breathLfo.start();
@@ -399,6 +479,9 @@ export function createAtmosphereAudio(): AtmosphereAudio {
 
     chordIndex = 1;
     nextChordTime = context.currentTime + CHORD_S;
+    // Drum grid step 0 and chord 0's downbeat start at the same instant.
+    drumEighthIndex = 0;
+    nextDrumEighth = context.currentTime;
 
     const built: Graph = {
       context,
@@ -413,6 +496,12 @@ export function createAtmosphereAudio(): AtmosphereAudio {
       deepFilter,
       deepGain,
       abyssBellBus,
+      drumSum,
+      snareReverbSend,
+      duckGain,
+      transitionBus,
+      pinkBuffer,
+      whiteBuffer,
       bellSend,
       depthTrim,
       master,
@@ -429,7 +518,7 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     const now = g.context.currentTime;
     const submerge = Math.min(1, depth / SUBMERGE_DEPTH);
     const eased = submerge * submerge * (3 - 2 * submerge);
-    const abyss = Math.max(0, (depth - SUBMERGE_DEPTH) / (1 - SUBMERGE_DEPTH));
+    abyss = Math.max(0, (depth - SUBMERGE_DEPTH) / (1 - SUBMERGE_DEPTH));
     airLevel = (1 - eased) * (1 - eased);
     // Pads fade in on a sin curve while the surface world's level falls on a
     // squared curve — not a matched equal-power pair, but close enough that
@@ -498,20 +587,21 @@ export function createAtmosphereAudio(): AtmosphereAudio {
     osc.stop(start + 1.3);
   }
 
-  // An abyssal bell: three inharmonic partials (1 : 2.76 : 5.4 — roughly a
-  // struck bar's overtones, deliberately NOT a harmonic series so it sounds
-  // like an object, not a note), 8 ms strike, each partial decaying on its
-  // own clock with the fundamental ringing longest. Rooted on the sounding
-  // chord an octave up so it always lands inside the harmony. Routed to the
-  // unmuffled bell bus; the reverb network is what turns it into distance.
+  // An abyssal chime: three near-harmonic partials (1 : 2 : 3.01 — the 3.01
+  // keeps a touch of struck-object character without the gong-like dread of
+  // a fully inharmonic stack), 8 ms strike, tight chime decays. Rooted on
+  // the sounding chord an octave up so it always lands inside the harmony,
+  // and deliberately OFF the drum grid — a floating chime over a locked
+  // groove is a lofi staple. Routed to the unmuffled bell bus; the reverb
+  // network is what turns it into distance.
   function scheduleAbyssBell(g: Graph) {
     const start = g.context.currentTime + 0.02;
     const sounding = PROGRESSION[(chordIndex + PROGRESSION.length - 1) % PROGRESSION.length];
     const root = sounding.deep[0] * 2;
     const partials: Array<[ratio: number, peak: number, decayS: number]> = [
-      [1, 0.32, 5 + Math.random()],
-      [2.76, 0.14, 3 + Math.random()],
-      [5.4, 0.06, 2 + Math.random()],
+      [1, 0.32, 2.5 + Math.random()],
+      [2, 0.14, 1.5 + Math.random()],
+      [3.01, 0.06, 1 + Math.random()],
     ];
     for (const [ratio, peak, decayS] of partials) {
       const osc = g.context.createOscillator();
@@ -525,6 +615,188 @@ export function createAtmosphereAudio(): AtmosphereAudio {
       envelope.gain.exponentialRampToValueAtTime(0.0001, start + decayS);
       osc.start(start);
       osc.stop(start + decayS + 0.1);
+    }
+  }
+
+  // One 16th of the lofi groove. levelMult scales every hit by how deep the
+  // listener actually is (deepLevel is the pad ramp; the abyss factor keeps
+  // the kit silent until the muffle crossfade has fully finished). Peaks are
+  // read live at schedule time — same pattern the plucks use for airLevel —
+  // so no automated bus is needed for the fade.
+  function scheduleDrumStep(g: Graph, index: number, when: number) {
+    const drumLevel = deepLevel * Math.min(1, abyss / DRUM_FADE_ABYSS);
+    if (drumLevel <= 0.01) return;
+    const levelMult = drumLevel / DEEP_LEVEL;
+    const swung = index % 2 === 1 ? when + DRUM_SWING_S : when;
+
+    const kickVel = KICK_STEPS[index];
+    if (kickVel !== undefined) {
+      const hit = swung + (Math.random() * 0.024 - 0.012);
+      const peak = DRUM_KICK_PEAK * kickVel * levelMult * (0.85 + Math.random() * 0.3);
+      const osc = g.context.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(130, hit);
+      osc.frequency.exponentialRampToValueAtTime(42, hit + 0.09);
+      const envelope = g.context.createGain();
+      envelope.gain.setValueAtTime(0.0001, hit);
+      envelope.gain.linearRampToValueAtTime(peak, hit + 0.003);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, hit + 0.22);
+      osc.connect(envelope).connect(g.drumSum);
+      osc.start(hit);
+      osc.stop(hit + 0.3);
+      // Sidechain pump: dip the dry pad path, recover over ~180ms. Kicks are
+      // never closer than ~1.3s in this pattern, so ramps can't overlap.
+      g.duckGain.gain.setValueAtTime(1, hit);
+      g.duckGain.gain.linearRampToValueAtTime(DRUM_DUCK_DEPTH, hit + 0.005);
+      g.duckGain.gain.setTargetAtTime(1, hit + 0.005, DRUM_DUCK_RELEASE_TC);
+    }
+
+    const snareVel = SNARE_STEPS[index];
+    if (snareVel !== undefined) {
+      const hit = swung + (Math.random() * 0.02 - 0.01);
+      const vel = snareVel * levelMult * (0.88 + Math.random() * 0.24);
+      const noise = g.context.createBufferSource();
+      noise.buffer = g.whiteBuffer;
+      const filter = bandpass(g.context, 1500, 1.1);
+      const envelope = g.context.createGain();
+      envelope.gain.setValueAtTime(0.0001, hit);
+      envelope.gain.linearRampToValueAtTime(DRUM_SNARE_NOISE_PEAK * vel, hit + 0.002);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, hit + 0.08);
+      noise.connect(filter).connect(envelope).connect(g.drumSum);
+      envelope.connect(g.snareReverbSend);
+      noise.start(hit, Math.random() * 1.5);
+      noise.stop(hit + 0.12);
+      const body = g.context.createOscillator();
+      body.type = "sine";
+      body.frequency.value = 200;
+      const bodyEnv = g.context.createGain();
+      bodyEnv.gain.setValueAtTime(0.0001, hit);
+      bodyEnv.gain.linearRampToValueAtTime(DRUM_SNARE_BODY_PEAK * vel, hit + 0.002);
+      bodyEnv.gain.exponentialRampToValueAtTime(0.0001, hit + 0.06);
+      body.connect(bodyEnv).connect(g.drumSum);
+      body.start(hit);
+      body.stop(hit + 0.1);
+    }
+
+    // Hats tick every eighth: dusty bandpassed clicks, upbeats softer.
+    {
+      const hit = swung + (Math.random() * 0.012 - 0.006);
+      const accent = index % 2 === 0 ? 1 : 0.65;
+      const peak = DRUM_HAT_PEAK * accent * levelMult * (0.75 + Math.random() * 0.5);
+      const noise = g.context.createBufferSource();
+      noise.buffer = g.whiteBuffer;
+      const filter = bandpass(g.context, 6500, 0.9);
+      const envelope = g.context.createGain();
+      envelope.gain.setValueAtTime(0.0001, hit);
+      envelope.gain.linearRampToValueAtTime(peak, hit + 0.001);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, hit + 0.018);
+      noise.connect(filter).connect(envelope).connect(g.drumSum);
+      noise.start(hit, Math.random() * 1.5);
+      noise.stop(hit + 0.05);
+    }
+  }
+
+  // The plunge: a pitch-dropping lowpass-swept whoosh, a sinking bloop, and
+  // a scatter of small bubbles. speedGain/durationScale come from how fast
+  // the listener actually crossed the waterline (fast fling = louder and
+  // snappier; slow drift = softer and slightly lingering).
+  function scheduleSubmergeSfx(g: Graph, speedGain: number, durationScale: number) {
+    const start = g.context.currentTime + 0.02;
+    const whoosh = g.context.createBufferSource();
+    whoosh.buffer = g.pinkBuffer;
+    whoosh.playbackRate.setValueAtTime(1, start);
+    whoosh.playbackRate.exponentialRampToValueAtTime(0.6, start + 0.55 * durationScale);
+    const sweepA = lowpass(g.context, 4500, 0.7);
+    const sweepB = lowpass(g.context, 4500, 0.7);
+    sweepA.frequency.setValueAtTime(4500, start);
+    sweepA.frequency.exponentialRampToValueAtTime(350, start + 0.55 * durationScale);
+    sweepB.frequency.setValueAtTime(4500, start);
+    sweepB.frequency.exponentialRampToValueAtTime(350, start + 0.55 * durationScale);
+    const whooshEnv = g.context.createGain();
+    whooshEnv.gain.setValueAtTime(0.0001, start);
+    whooshEnv.gain.linearRampToValueAtTime(0.14 * speedGain, start + 0.03);
+    whooshEnv.gain.exponentialRampToValueAtTime(0.0001, start + 0.73 * durationScale);
+    whoosh.connect(sweepA).connect(sweepB).connect(whooshEnv).connect(g.transitionBus);
+    whoosh.start(start, Math.random());
+    whoosh.stop(start + 0.8 * durationScale);
+
+    const bloop = g.context.createOscillator();
+    bloop.type = "sine";
+    bloop.frequency.setValueAtTime(500, start + 0.08);
+    bloop.frequency.exponentialRampToValueAtTime(90, start + 0.08 + 0.5 * durationScale);
+    const bloopEnv = g.context.createGain();
+    bloopEnv.gain.setValueAtTime(0.0001, start + 0.08);
+    bloopEnv.gain.linearRampToValueAtTime(0.1 * speedGain, start + 0.1);
+    bloopEnv.gain.exponentialRampToValueAtTime(0.0001, start + 0.58 * durationScale);
+    bloop.connect(bloopEnv).connect(g.transitionBus);
+    bloop.start(start + 0.08);
+    bloop.stop(start + 0.7 * durationScale);
+
+    for (let i = 0; i < 5; i++) {
+      const at = start + 0.15 + i * 0.09 + (Math.random() * 0.03 - 0.015);
+      const decayS = 0.06 + Math.random() * 0.03;
+      const frequency = 600 + Math.random() * 1200;
+      const blip = g.context.createOscillator();
+      blip.type = "sine";
+      blip.frequency.setValueAtTime(frequency, at);
+      blip.frequency.linearRampToValueAtTime(frequency * 0.78, at + decayS);
+      const blipEnv = g.context.createGain();
+      blipEnv.gain.setValueAtTime(0.0001, at);
+      blipEnv.gain.linearRampToValueAtTime((0.025 + Math.random() * 0.02) * speedGain, at + 0.004);
+      blipEnv.gain.exponentialRampToValueAtTime(0.0001, at + decayS);
+      blip.connect(blipEnv).connect(g.transitionBus);
+      blip.start(at);
+      blip.stop(at + decayS + 0.05);
+    }
+  }
+
+  // The breach: a sharp highpass-swept splash, a rising whoop, and droplet
+  // patter falling back onto the surface after.
+  function scheduleResurfaceSfx(g: Graph, speedGain: number, durationScale: number) {
+    const start = g.context.currentTime + 0.02;
+    const splash = g.context.createBufferSource();
+    splash.buffer = g.pinkBuffer;
+    splash.playbackRate.setValueAtTime(0.85, start);
+    splash.playbackRate.exponentialRampToValueAtTime(1.25, start + 0.3 * durationScale);
+    const sweep = g.context.createBiquadFilter();
+    sweep.type = "highpass";
+    sweep.Q.value = 0.7;
+    sweep.frequency.setValueAtTime(200, start);
+    sweep.frequency.exponentialRampToValueAtTime(5000, start + 0.35 * durationScale);
+    const splashEnv = g.context.createGain();
+    splashEnv.gain.setValueAtTime(0.0001, start);
+    splashEnv.gain.linearRampToValueAtTime(0.17 * speedGain, start + 0.012);
+    splashEnv.gain.exponentialRampToValueAtTime(0.0001, start + 0.5 * durationScale);
+    splash.connect(sweep).connect(splashEnv).connect(g.transitionBus);
+    splash.start(start, Math.random());
+    splash.stop(start + 0.6 * durationScale);
+
+    const whoop = g.context.createOscillator();
+    whoop.type = "sine";
+    whoop.frequency.setValueAtTime(110, start);
+    whoop.frequency.exponentialRampToValueAtTime(700, start + 0.35 * durationScale);
+    const whoopEnv = g.context.createGain();
+    whoopEnv.gain.setValueAtTime(0.0001, start);
+    whoopEnv.gain.linearRampToValueAtTime(0.11 * speedGain, start + 0.015);
+    whoopEnv.gain.exponentialRampToValueAtTime(0.0001, start + 0.4 * durationScale);
+    whoop.connect(whoopEnv).connect(g.transitionBus);
+    whoop.start(start);
+    whoop.stop(start + 0.5 * durationScale);
+
+    let at = start + 0.35 * durationScale;
+    for (const gap of [0.06, 0.08, 0.09, 0.11, 0.14, 0.18]) {
+      at += gap + (Math.random() * 0.04 - 0.02);
+      const decayS = 0.015 + Math.random() * 0.01;
+      const tap = g.context.createBufferSource();
+      tap.buffer = g.pinkBuffer;
+      const tapFilter = bandpass(g.context, 1800 + Math.random() * 2400, 3);
+      const tapEnv = g.context.createGain();
+      tapEnv.gain.setValueAtTime(0.0001, at);
+      tapEnv.gain.linearRampToValueAtTime((0.04 + Math.random() * 0.02) * speedGain, at + 0.002);
+      tapEnv.gain.exponentialRampToValueAtTime(0.0001, at + decayS);
+      tap.connect(tapFilter).connect(tapEnv).connect(g.transitionBus);
+      tap.start(at, Math.random() * 1.5);
+      tap.stop(at + decayS + 0.03);
     }
   }
 
@@ -575,7 +847,14 @@ export function createAtmosphereAudio(): AtmosphereAudio {
         nextAbyssBellAt = now + 5 + Math.random() * 6;
       } else if (now >= nextAbyssBellAt) {
         scheduleAbyssBell(g);
-        nextAbyssBellAt = now + 8 + Math.random() * 12;
+        nextAbyssBellAt = now + 6 + Math.random() * 9;
+      }
+      // The drum cursor ALWAYS advances — gating lives inside scheduleDrumStep
+      // — so resurfacing then diving again never triggers a catch-up burst.
+      while (nextDrumEighth < now + LOOKAHEAD_S) {
+        scheduleDrumStep(g, drumEighthIndex, nextDrumEighth);
+        drumEighthIndex = (drumEighthIndex + 1) % 16;
+        nextDrumEighth += DRUM_EIGHTH_S;
       }
     }, TICK_MS);
   }
@@ -616,7 +895,37 @@ export function createAtmosphereAudio(): AtmosphereAudio {
 
   function setDepth(next: number) {
     depth = Math.min(1, Math.max(0, next));
-    if (graph) applyDepth(graph);
+    const g = graph;
+    if (!g) return;
+    applyDepth(g);
+    // Waterline crossing detection with hysteresis: the dead band keeps
+    // scroll-ease jitter at the line from double-firing, and bandEnteredAt —
+    // reset whenever depth sits outside the band — approximates how fast the
+    // listener crossed: fast flings hit harder, slow drifts announce softly.
+    const now = g.context.currentTime;
+    const newSide =
+      depth > SUBMERGE_DEPTH + WATERLINE_HYST
+        ? "below"
+        : depth < SUBMERGE_DEPTH - WATERLINE_HYST
+          ? "above"
+          : waterlineSide;
+    if (waterlineSide === null) {
+      waterlineSide = newSide; // first call (e.g. reload mid-page): arm silently
+    } else if (newSide !== waterlineSide && newSide !== null) {
+      waterlineSide = newSide;
+      if (g.context.state === "running" && now - lastWaterlineFireAt >= WATERLINE_COOLDOWN_S) {
+        lastWaterlineFireAt = now;
+        const crossing = Math.min(0.5, Math.max(0.08, now - bandEnteredAt));
+        const t = (0.5 - crossing) / (0.5 - 0.08);
+        const speedGain = 0.7 + (1.15 - 0.7) * t;
+        const durationScale = 1.15 - (1.15 - 0.75) * t;
+        if (newSide === "below") scheduleSubmergeSfx(g, speedGain, durationScale);
+        else scheduleResurfaceSfx(g, speedGain, durationScale);
+      }
+    }
+    if (depth <= SUBMERGE_DEPTH - WATERLINE_HYST || depth >= SUBMERGE_DEPTH + WATERLINE_HYST) {
+      bandEnteredAt = now;
+    }
   }
 
   function destroy() {
