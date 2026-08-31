@@ -1,3 +1,5 @@
+export type ProjectImage = { src: string; alt: string; width: number; height: number };
+
 export type Project = {
   name: string;
   badge: "live" | "client build" | "open source" | "local-first" | "in development" | "plugin";
@@ -5,9 +7,10 @@ export type Project = {
   description: string;
   points: string[];
   stack: string[];
-  image?: { src: string; alt: string; width: number; height: number };
-  terminal?: string[];
-  liveUrl?: string;
+  // Card gallery: first image leads; arrows page through the rest, and any
+  // image expands to a lightbox on click (dense diagrams go later in the
+  // list — they're meant to be read expanded).
+  images: ProjectImage[];
   repoUrl?: string;
   note?: string;
 };
@@ -40,7 +43,10 @@ export const projects: Project[] = [
       "3,500+ automated tests, green — including an adversarial check that sensitive runs have no network rail reachable",
     ],
     stack: ["Electron", "TypeScript", "React", "Chrome MV3", "Windows UIA", "Ollama", "Claude Code"],
-    image: { src: "/projects/drydock.png", alt: "Drydock — automation run timeline with token and cost receipt", width: 2000, height: 1030 },
+    images: [
+      { src: "/projects/drydock.png", alt: "Drydock — automation run timeline with token and cost receipt", width: 2000, height: 1030 },
+      { src: "/projects/drydock-editor.png", alt: "Drydock — an automation's detail sheet: when it runs, which files it reads, what you get, allowed tools, and past runs, with the 'Claude never sees it' privacy badge", width: 2000, height: 1032 },
+    ],
     note: "Private build — ask me for a walkthrough.",
   },
   {
@@ -56,12 +62,20 @@ export const projects: Project[] = [
       "Maker–checker separation: a fresh-context agent reviews what the builder produced, and it has caught real bypasses",
     ],
     stack: ["Node", "Claude Code", "Hooks API", "Zero dependencies"],
-    image: {
-      src: "/projects/truststack.png",
-      alt: "trust-stack capability grid — STOPS: --no-verify becomes a question; ROUTES: low risk merges, high risk waits; CHECKS: catches bypasses humans miss; REMEMBERS: every decision permanently logged. Flight rules for AI coding agents.",
-      width: 1600,
-      height: 780,
-    },
+    images: [
+      {
+        src: "/projects/truststack.png",
+        alt: "trust-stack flight console — an agent action falls through the skills field (advice) into the hooks wall (physics), splitting to auto-merge or human approval, with the capability list alongside.",
+        width: 1600,
+        height: 780,
+      },
+      {
+        src: "/projects/truststack-grid.png",
+        alt: "trust-stack capability grid — STOPS: --no-verify becomes a question; ROUTES: low risk merges, high risk waits; CHECKS: catches bypasses humans miss; REMEMBERS: every decision permanently logged.",
+        width: 1600,
+        height: 780,
+      },
+    ],
   },
   {
     name: "FIGHT — Shadow League",
@@ -76,7 +90,11 @@ export const projects: Project[] = [
       "Loadout economy with an equip/store/workshop hub and a live 3D preview of every move you touch",
     ],
     stack: ["Next.js", "React", "TypeScript", "Three.js", "Tailwind", "Python (CV pipeline)"],
-    image: { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 880 },
+    images: [
+      { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 880 },
+      { src: "/projects/fight-film.png", alt: "FIGHT — Film Room: a captured shadow replayed on a 3D fighter under the spotlight, with playback scrubber and speed controls", width: 1600, height: 1000 },
+      { src: "/projects/fight-menu.png", alt: "FIGHT — mode select: Fight, Loadout, Practice, Watch, Training, and Physics Lab over the empty ring", width: 1600, height: 1000 },
+    ],
     note: "Async tournaments are the next milestone.",
   },
   {
@@ -92,8 +110,10 @@ export const projects: Project[] = [
       "Runs at $0: static site + Supabase, zero runtime LLM calls",
     ],
     stack: ["TypeScript", "React", "Vite", "Supabase", "ts-fsrs", "Vercel"],
-    image: { src: "/projects/mivora.png", alt: "Mivora home page — gamified AI skill tracks", width: 1600, height: 1000 },
-    liveUrl: "https://mivoralearn.com",
+    images: [
+      { src: "/projects/mivora.png", alt: "Mivora home page — gamified AI skill tracks", width: 1600, height: 1000 },
+      { src: "/projects/mivora-lesson.png", alt: "Mivora lesson page — Bit vs. Qubit, lesson 1 of the Quantum Computing track", width: 1600, height: 1000 },
+    ],
   },
   {
     name: "Document Intelligence",
@@ -108,7 +128,10 @@ export const projects: Project[] = [
       "Refuses to answer when the sources don't contain it — no confident hallucination path",
     ],
     stack: ["Python", "PyMuPDF", "Tesseract", "Sentence-Transformers", "FAISS", "OpenAI", "Gradio"],
-    image: { src: "/projects/rag.png", alt: "Document Intelligence — five-stage RAG pipeline: ingest, chunk, embed, retrieve, generate", width: 1600, height: 1000 },
+    images: [
+      { src: "/projects/rag.png", alt: "Document Intelligence — five-stage RAG pipeline: ingest, chunk, embed, retrieve, generate", width: 1600, height: 1000 },
+      { src: "/projects/rag-detail.png", alt: "Document Intelligence — detailed architecture with per-stage internals, fallbacks, and model choices (expand to read)", width: 1600, height: 1000 },
+    ],
     repoUrl: "https://github.com/Awalker77s/Document-Intelligence-Pipeline",
   },
   {
@@ -124,7 +147,9 @@ export const projects: Project[] = [
       "The graph you're looking at is the real vault, rendered from its actual wikilinks",
     ],
     stack: ["Obsidian", "Markdown", "Git", "Claude Code"],
-    image: { src: "/projects/brain.png", alt: "Brain — force-directed graph of the real vault: 88 notes, 99 links, hubs labeled (Home, Machines, Memory protocol)", width: 1600, height: 1000 },
+    images: [
+      { src: "/projects/brain.png", alt: "Brain — force-directed graph of the real Obsidian vault", width: 1600, height: 1000 },
+    ],
   },
   {
     name: "Echinoid ID",
@@ -139,8 +164,10 @@ export const projects: Project[] = [
       "3 free IDs, then Stripe-billed Pro",
     ],
     stack: ["TypeScript", "React", "Supabase", "Edge Functions", "OpenAI", "Stripe"],
-    image: { src: "/projects/echinoid.png", alt: "Echinoid ID — fossil identification interface", width: 1600, height: 965 },
-    liveUrl: "https://echinoid-ui.vercel.app",
+    images: [
+      { src: "/projects/echinoid.png", alt: "Echinoid ID — fossil identification interface", width: 1600, height: 965 },
+      { src: "/projects/echinoid-how.png", alt: "Echinoid ID — how it works: upload photos, add field details, analyze features, compare", width: 1600, height: 1000 },
+    ],
   },
   {
     name: "Mother Truckin' Pizza",
@@ -154,8 +181,11 @@ export const projects: Project[] = [
       "Dual-mode data layer — Supabase in production, localStorage for local dev",
     ],
     stack: ["React", "Vite", "Tailwind", "Supabase", "Resend", "Vercel"],
-    image: { src: "/projects/pizza.png", alt: "Mother Truckin' Pizza — menu page", width: 1600, height: 765 },
-    liveUrl: "https://mother-truckin-pizza.vercel.app",
+    images: [
+      { src: "/projects/pizza-home.png", alt: "Mother Truckin' Pizza — home page hero with photo collage and stats (10+ years rolling, 500+ events catered)", width: 1600, height: 1000 },
+      { src: "/projects/pizza.png", alt: "Mother Truckin' Pizza — menu page", width: 1600, height: 765 },
+      { src: "/projects/pizza-catering.png", alt: "Mother Truckin' Pizza — catering page with wedding, corporate, party, and festival service cards", width: 1600, height: 1000 },
+    ],
   },
 ];
 
