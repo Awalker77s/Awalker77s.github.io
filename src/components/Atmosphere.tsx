@@ -11,11 +11,13 @@ export default function Atmosphere() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<RainEngine | null>(null);
   const audioRef = useRef<RainAudio | null>(null);
+  const depthRef = useRef(0);
   const [motionOn, setMotionOn] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
 
   function enableSound() {
     audioRef.current ??= createRainAudio();
+    audioRef.current.setDepth(depthRef.current);
     setSoundOn(true);
     return audioRef.current.enable();
   }
@@ -23,7 +25,11 @@ export default function Atmosphere() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const engine = createRainEngine(canvas);
+    const engine = createRainEngine(canvas, (depth) => {
+      depthRef.current = depth;
+      document.documentElement.style.setProperty("--depth", depth.toFixed(3));
+      audioRef.current?.setDepth(depth);
+    });
     engineRef.current = engine;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -41,6 +47,7 @@ export default function Atmosphere() {
       engineRef.current = null;
       audioRef.current?.destroy();
       audioRef.current = null;
+      document.documentElement.style.removeProperty("--depth");
     };
   }, []);
 

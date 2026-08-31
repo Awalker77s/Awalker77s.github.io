@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  --depth: 0;
   --background: #060b14;
   --surface: #0d1626;
   --surface-raised: #111c30;
@@ -11,6 +12,22 @@
   --faint: #8b98ad;
   --ghost: #5d6b82;
   --accent: #67e0ff;
+}
+
+/* Depth-reactive tokens: as --depth rises (set by the rain engine while the page
+   submerges), surfaces sink darker and the dim text tiers brighten — every shift
+   raises contrast over the depth-0 palette, so AA holds at all depths.
+   See docs/research/underwater-city/underwater-scroll.md. */
+@supports (color: color-mix(in oklab, red, blue calc(50% * 1))) {
+  :root {
+    --surface: color-mix(in oklab, #0d1626, #070e1c calc(var(--depth) * 70%));
+    --surface-raised: color-mix(in oklab, #111c30, #0a1424 calc(var(--depth) * 70%));
+    --surface-high: color-mix(in oklab, #16233c, #0e192e calc(var(--depth) * 70%));
+    --edge: color-mix(in oklab, #1e2d47, #2e4468 calc(var(--depth) * 100%));
+    --muted: color-mix(in oklab, #b9c4d6, #ccd7e8 calc(var(--depth) * 100%));
+    --faint: color-mix(in oklab, #8b98ad, #a2b1c9 calc(var(--depth) * 100%));
+    --ghost: color-mix(in oklab, #5d6b82, #75869f calc(var(--depth) * 100%));
+  }
 }
 
 @theme inline {
@@ -32,6 +49,12 @@
   html {
     scroll-behavior: smooth;
   }
+}
+
+/* Overscroll rubber-band shows the document background; match the abyss floor
+   so both ends of the scroll read as part of the scene. */
+html {
+  background-color: #02050b;
 }
 
 body {
