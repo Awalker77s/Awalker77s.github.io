@@ -5,7 +5,7 @@ export type AtmosphereAudio = {
   destroy: () => void;
 };
 
-const MASTER_LEVEL = 0.25;
+const MASTER_LEVEL = 0.55;
 const FADE_IN_S = 1.2;
 const FADE_OUT_S = 0.6;
 
@@ -22,9 +22,9 @@ const RAIN_BODY_LEVEL = 0.15;
 const SPARKLE_LEVEL = 0.035;
 const RUMBLE_LEVEL = 0.03;
 
-const KEYS_LEVEL = 0.14;
-const BASS_LEVEL = 0.11;
-const PLUCK_PEAK = 0.05;
+const KEYS_LEVEL = 0.32;
+const BASS_LEVEL = 0.25;
+const PLUCK_PEAK = 0.09;
 const CHORD_S = 8;
 const GLIDE_S = 0.12;
 const LOOKAHEAD_S = 1.2;

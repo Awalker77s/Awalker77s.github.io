@@ -167,7 +167,6 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   let submerge = 0;
   let depth = 0;
   let cameraY = 0;
-  let depthSettled = false;
   let lastEmittedDepth = -1;
   let staticRenderedSubmerge = -1;
   let staticRenderedDepth = -1;
@@ -636,19 +635,12 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
 
   // Camera model: the first ~0.9 viewport of scroll dips the eye below the
   // surface; the rest of the page maps to depth 0 -> 1 (abyss at the footer).
-  function updateDepth(dt: number) {
+  // No easing here — wheel smoothing already lives in src/lib/scroll.ts, and a
+  // second stage in series would make the water lag the text it scrolls with.
+  function updateDepth() {
     const submergeRange = Math.max(height * 0.9, 1);
-    const targetSubmerge = clamp01(scrollYCached / submergeRange);
-    const targetDepth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
-    if (!depthSettled) {
-      submerge = targetSubmerge;
-      depth = targetDepth;
-      depthSettled = true;
-    } else {
-      const blend = 1 - Math.exp(-dt * 8);
-      submerge += (targetSubmerge - submerge) * blend;
-      depth += (targetDepth - depth) * blend;
-    }
+    submerge = clamp01(scrollYCached / submergeRange);
+    depth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
     const eased = submerge * submerge * (3 - 2 * submerge);
     cameraY = eased * (waterRest + MAX_WAVE_HEIGHT + 24);
     if (onDepth) {
@@ -955,7 +947,7 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     }
     if (steps === 4) accumulator = 0;
     if ((frameTick++ & 127) === 0) refreshScrollRange();
-    updateDepth(dt);
+    updateDepth();
     render(false);
     rafId = requestAnimationFrame(frame);
   }
@@ -978,8 +970,7 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   function renderStaticFrame() {
     resize();
     scrollYCached = window.scrollY;
-    depthSettled = false;
-    updateDepth(0);
+    updateDepth();
     heights.fill(0);
     drops.length = 0;
     splashes.length = 0;
@@ -994,8 +985,7 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     if (running || staticRafId !== 0) return;
     staticRafId = requestAnimationFrame(() => {
       staticRafId = 0;
-      depthSettled = false;
-      updateDepth(0);
+      updateDepth();
       if (
         Math.abs(submerge - staticRenderedSubmerge) > 0.008 ||
         Math.abs(depth - staticRenderedDepth) > 0.008
