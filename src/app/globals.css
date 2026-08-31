@@ -80,14 +80,26 @@ body {
   outline-offset: 2px;
 }
 
-/* The scene canvas is sized to the LARGE viewport, not the dynamic one: on
-   phones the URL-bar collapse/expand otherwise changes the canvas rect on
-   every scroll direction change, and the engine's resize path rebuilds the
-   water (waterline + camera math shift, ripple state wiped) — seen live as a
-   mid-scroll water glitch. With 100lvh the rect never moves while scrolling;
-   the strip hidden behind the toolbar is just offscreen background. The 100vh
-   line is the fallback (desktop identical; iOS's classic 100vh already means
-   the large viewport). */
+/* Scene canvas: absolutely positioned IN THE DOCUMENT (not fixed), so the
+   browser's compositor scrolls the skyline with the text — iOS updates
+   window.scrollY asynchronously during flicks, so a JS-positioned scene lags
+   the words by frames; an in-flow element cannot. 200lvh: one viewport of
+   sky/city/surface plus a deep-water column that scrolls away beneath. */
+.scene-doc-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -20;
+  width: 100%;
+  height: 200vh;
+  height: 200lvh;
+}
+
+/* Depth canvas (fixed): sized to the LARGE viewport so phone URL-bar
+   collapse/expand never changes its rect mid-scroll (the engine measures the
+   viewport from this rect; a change would rebuild the water). It paints only
+   viewport ambience — abyss wash, god rays, snow — and stays transparent at
+   the surface, so it must never carry an opaque background. */
 .scene-canvas {
   height: 100vh;
   height: 100lvh;

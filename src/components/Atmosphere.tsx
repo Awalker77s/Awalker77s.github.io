@@ -11,6 +11,7 @@ const SOUND_KEY = "rain-sound";
 
 export default function Atmosphere() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const depthCanvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<RainEngine | null>(null);
   const audioRef = useRef<AtmosphereAudio | null>(null);
   const depthRef = useRef(0);
@@ -26,9 +27,11 @@ export default function Atmosphere() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const depthCanvas = depthCanvasRef.current;
+    if (!canvas || !depthCanvas) return;
     const engine = createRainEngine(
       canvas,
+      depthCanvas,
       (depth) => {
         depthRef.current = depth;
         document.documentElement.style.setProperty("--depth", depth.toFixed(3));
@@ -145,7 +148,11 @@ export default function Atmosphere() {
 
   return (
     <>
-      <canvas ref={canvasRef} aria-hidden className="scene-canvas pointer-events-none fixed left-0 top-0 -z-10 w-full bg-background" />
+      {/* Scene: in the document flow — the browser scrolls it with the text.
+          Depth: fixed viewport ambience (abyss/rays/snow), transparent at the
+          surface, stacked over the scene and under the content. */}
+      <canvas ref={canvasRef} aria-hidden className="scene-doc-canvas pointer-events-none bg-background" />
+      <canvas ref={depthCanvasRef} aria-hidden className="scene-canvas pointer-events-none fixed left-0 top-0 -z-10 w-full" />
       <div className="fixed bottom-5 right-5 z-40 flex gap-2">
         <button
           type="button"

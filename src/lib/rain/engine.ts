@@ -151,14 +151,26 @@ function rampRgb(t: number): Rgb {
   return DEPTH_RAMP[DEPTH_RAMP.length - 1].rgb;
 }
 
+// Two canvases, split by who moves them:
+// - `canvas` (scene): sky, city, water surface, rain — sits IN THE DOCUMENT
+//   FLOW (absolute, 200lvh tall), so the browser's compositor scrolls it with
+//   the text. iOS updates window.scrollY asynchronously during flicks, so any
+//   JS-positioned scene lags the words by frames — in-flow is the only way the
+//   skyline stays truly glued to the hero copy (operator report 2026-08-31).
+// - `depthCanvas` (depth): fixed, viewport-filling ambience — abyss wash, god
+//   rays, marine snow, glints, bubbles. Slow washes where a frame of scroll
+//   lag is invisible.
 export function createRainEngine(
   canvas: HTMLCanvasElement,
+  depthCanvas: HTMLCanvasElement,
   onDepth?: (depth: number) => void,
   blimpSkills: string[] = [],
 ): RainEngine {
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("rain engine requires a 2d canvas context");
+  const depthContext = depthCanvas.getContext("2d");
+  if (!context || !depthContext) throw new Error("rain engine requires 2d canvas contexts");
   const ctx = context;
+  const dctx = depthContext;
   const coarsePointer = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
 
   let width = 0;
@@ -169,6 +181,9 @@ export function createRainEngine(
   let builtCityDpr = -1;
   let waterRest = 0;
   let groundY = 0;
+  // Bottom of the per-frame repaint region on the scene canvas: everything
+  // below it is the static deep-water column, painted once per resize.
+  let liveBottom = 0;
   let columnCount = 0;
   let heights = new Float32Array(0);
   let velocities = new Float32Array(0);
@@ -242,15 +257,13 @@ export function createRainEngine(
   let scrollRange = 1;
   let submerge = 0;
   let depth = 0;
-  let cameraY = 0;
   let lastEmittedDepth = -1;
   let staticRenderedSubmerge = -1;
   let staticRenderedDepth = -1;
 
+  // Fixed span (waterRest -> canvas bottom): rebuilt only on resize.
   let waterGradient: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
-  let waterGradientCameraY = -1;
-  let waterGradientSubmerge = -1;
-  let abyssGradient: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
+  let abyssGradient: CanvasGradient = dctx.createLinearGradient(0, 0, 0, 1);
   let abyssGradientDepth = -1;
 
   function refreshScrollRange() {
@@ -259,7 +272,9 @@ export function createRainEngine(
 
   function resize() {
     refreshScrollRange();
-    const rect = canvas.getBoundingClientRect();
+    // The depth canvas is 100lvh — it IS the viewport measurement. The scene
+    // canvas is 200lvh of document, sized from the same numbers.
+    const rect = depthCanvas.getBoundingClientRect();
     if (rect.width === width && rect.height === height) return;
     const prevGroundY = groundY;
     const prevWaterRest = waterRest;
@@ -272,11 +287,18 @@ export function createRainEngine(
     const dpr = Math.min(window.devicePixelRatio || 1, isMobile || coarsePointer ? 1.5 : MAX_DPR);
     bakeDpr = dpr;
     canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
+    canvas.height = Math.round(height * 2 * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    depthCanvas.width = Math.round(width * dpr);
+    depthCanvas.height = Math.round(height * dpr);
+    dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     waterRest = height * (1 - WATER_FRACTION);
     groundY = waterRest - height * SHORE_FRACTION;
+    // Live region: sky + city + surface + reflections/streaks. max(height, …)
+    // guarantees the per-frame sky fill (0..height) never overwrites rows the
+    // per-frame water fill doesn't also cover.
+    liveBottom = Math.max(height, waterRest + 220);
     columnCount = Math.ceil(width / COLUMN_SPACING) + 1;
     // Ripple state survives any resize that keeps the column count (all
     // height-only changes): reallocating here flattened the surface on every
@@ -306,7 +328,12 @@ export function createRainEngine(
     hazeGradient.addColorStop(0, `rgba(${HAZE_VIOLET}, 0)`);
     hazeGradient.addColorStop(0.65, `rgba(${HAZE_VIOLET}, 0.16)`);
     hazeGradient.addColorStop(1, `rgba(${NEON_CYAN}, 0.05)`);
-    waterGradientCameraY = -1;
+    // The water column's shading is fixed in scene space — deep-darkening
+    // while submerged is the depth canvas's job now, so this never rebuilds
+    // per scroll.
+    waterGradient = ctx.createLinearGradient(0, waterRest - 20, 0, height * 2 + 20);
+    waterGradient.addColorStop(0, WATER_SURFACE);
+    waterGradient.addColorStop(1, rgbString(mixRgb(WATER_DEEP_RGB, rampRgb(0.2), 1)));
     abyssGradientDepth = -1;
 
     const fogRadius = Math.max(200, Math.round(width * 0.3));
@@ -359,6 +386,11 @@ export function createRainEngine(
         for (const splash of splashes) splash.y += surfaceShift;
       }
     }
+
+    // Static deep-water column below the live region, painted once: per-frame
+    // scene paints are clipped to liveBottom, so these rows persist untouched.
+    ctx.fillStyle = waterGradient;
+    ctx.fillRect(0, liveBottom, width, height * 2 - liveBottom);
   }
 
   function makeSpriteCanvas(w: number, h: number, dpr: number) {
@@ -1084,7 +1116,7 @@ export function createRainEngine(
       }
     }
 
-    const surfaceScreenY = waterRest - cameraY;
+    const surfaceScreenY = waterRest - scrollYCached;
     if (submerge > 0.95 && depth < 0.2) {
       bubbleIn -= SIM_STEP;
       if (bubbleIn <= 0) {
@@ -1108,27 +1140,15 @@ export function createRainEngine(
     bubbles.length = write;
   }
 
-  // Camera model: the scene is ANCHORED TO THE DOCUMENT — cameraY equals
-  // scrollY exactly (capped once the surface has fully left the frame), so the
-  // skyline scrolls as if it were part of the hero markup: a building sitting
-  // between the words at scroll 0 stays under those words the whole way down
-  // (operator spec 2026-08-31: "it should be the same as the text… stay same
-  // place"). No easing and no scale factor of ANY kind — wheel smoothing
-  // already lives in src/lib/scroll.ts, and even the previous ~0.975 linear
-  // ratio read as the scene slipping against the text. Depth/audio still map
-  // off the same 0.9-viewport submerge range below.
+  // There is no camera. The scene canvas sits in the document flow, so the
+  // browser's compositor scrolls the skyline with the text — exactly, at
+  // display refresh, regardless of when JS sees scrollY (operator spec
+  // 2026-08-31: a building sitting between the words at scroll 0 stays under
+  // those words). scrollY here only drives depth/audio and the depth canvas.
   function updateDepth() {
     const submergeRange = Math.max(height * 0.9, 1);
     submerge = clamp01(scrollYCached / submergeRange);
     depth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
-    // Cap margin covers physics chop + the additive swell so no crest peeks
-    // back into frame once fully submerged. Scale-invariant: max swell
-    // amplitude is 0.12 of the water band, which grows with viewport height
-    // (a fixed margin was mathematically exceeded above ~1310px viewports).
-    // scrollY < 0 (iOS rubber-band) rides through 1:1 like everything else —
-    // the undrawn strip above the sky is the canvas base coat, same color as
-    // SKY_TOP, so the bounce is seamless.
-    cameraY = Math.min(scrollYCached, waterRest + MAX_WAVE_HEIGHT + height * WATER_FRACTION * 0.12 + 8);
     if (onDepth) {
       const combined = clamp01(submerge * 0.4 + depth * 0.6);
       if (lastEmittedDepth < 0 || Math.abs(combined - lastEmittedDepth) > 0.003) {
@@ -1264,18 +1284,10 @@ export function createRainEngine(
     }
   }
 
-  function ensureWaterGradient() {
-    if (Math.abs(cameraY - waterGradientCameraY) < 0.5 && Math.abs(submerge - waterGradientSubmerge) < 0.004) return;
-    waterGradientCameraY = cameraY;
-    waterGradientSubmerge = submerge;
-    waterGradient = ctx.createLinearGradient(0, waterRest - 20, 0, height + cameraY + 20);
-    waterGradient.addColorStop(0, WATER_SURFACE);
-    waterGradient.addColorStop(1, rgbString(mixRgb(WATER_DEEP_RGB, rampRgb(0.2), submerge)));
-  }
-
   function renderWater() {
-    ensureWaterGradient();
-    const floor = height + cameraY;
+    // Per-frame water fill stops at liveBottom; the same fixed gradient
+    // painted the static column below it (resize), so the seam is invisible.
+    const floor = liveBottom;
 
     // Back swell layer: slower, smaller, a touch higher — parallax makes the
     // main surface read as the near edge of a body of water, not a line.
@@ -1437,22 +1449,22 @@ export function createRainEngine(
   function ensureAbyssGradient() {
     if (Math.abs(depth - abyssGradientDepth) < 0.004) return;
     abyssGradientDepth = depth;
-    abyssGradient = ctx.createLinearGradient(0, 0, 0, height);
+    abyssGradient = dctx.createLinearGradient(0, 0, 0, height);
     abyssGradient.addColorStop(0, rgbString(rampRgb(depth)));
     abyssGradient.addColorStop(1, rgbString(rampRgb(Math.min(1, depth + 0.2))));
   }
 
   function renderAbyss() {
     ensureAbyssGradient();
-    ctx.fillStyle = abyssGradient;
-    ctx.fillRect(0, 0, width, height);
+    dctx.fillStyle = abyssGradient;
+    dctx.fillRect(0, 0, width, height);
     const glow = 0.1 * Math.max(0, 1 - depth / 0.55);
     if (glow > 0.005) {
-      const ceiling = ctx.createLinearGradient(0, 0, 0, 90);
+      const ceiling = dctx.createLinearGradient(0, 0, 0, 90);
       ceiling.addColorStop(0, `rgba(${UNDER_LIGHT}, ${glow})`);
       ceiling.addColorStop(1, `rgba(${UNDER_LIGHT}, 0)`);
-      ctx.fillStyle = ceiling;
-      ctx.fillRect(0, 0, width, 90);
+      dctx.fillStyle = ceiling;
+      dctx.fillRect(0, 0, width, 90);
     }
   }
 
@@ -1463,15 +1475,15 @@ export function createRainEngine(
     if (rayLevel < 0.01 && snowLevel < 0.01 && glintLevel < 0.01 && bubbles.length === 0) return;
 
     const clipTop = Math.max(0, surfaceScreenY);
-    ctx.save();
+    dctx.save();
     if (clipTop > 0) {
-      ctx.beginPath();
-      ctx.rect(0, clipTop, width, height - clipTop);
-      ctx.clip();
+      dctx.beginPath();
+      dctx.rect(0, clipTop, width, height - clipTop);
+      dctx.clip();
     }
 
     if (rayLevel > 0.01) {
-      ctx.globalCompositeOperation = "lighter";
+      dctx.globalCompositeOperation = "lighter";
       for (const ray of GOD_RAYS) {
         const sway = staticMode ? 0 : Math.sin((Math.PI * 2 * sceneTime) / ray.period + ray.phase) * 0.045;
         const topX = ray.x * width;
@@ -1479,43 +1491,43 @@ export function createRainEngine(
         const topHalf = ray.width * width * 0.5;
         const bottomHalf = topHalf * 2.6;
         const rayTop = Math.max(surfaceScreenY, -12);
-        const beam = ctx.createLinearGradient(0, rayTop, 0, height * 0.9);
+        const beam = dctx.createLinearGradient(0, rayTop, 0, height * 0.9);
         beam.addColorStop(0, `rgba(${UNDER_LIGHT}, ${ray.peak * rayLevel})`);
         beam.addColorStop(1, `rgba(${UNDER_LIGHT}, 0)`);
-        ctx.fillStyle = beam;
-        ctx.beginPath();
-        ctx.moveTo(topX - topHalf, rayTop);
-        ctx.lineTo(topX + topHalf, rayTop);
-        ctx.lineTo(bottomX + bottomHalf, height);
-        ctx.lineTo(bottomX - bottomHalf, height);
-        ctx.closePath();
-        ctx.fill();
+        dctx.fillStyle = beam;
+        dctx.beginPath();
+        dctx.moveTo(topX - topHalf, rayTop);
+        dctx.lineTo(topX + topHalf, rayTop);
+        dctx.lineTo(bottomX + bottomHalf, height);
+        dctx.lineTo(bottomX - bottomHalf, height);
+        dctx.closePath();
+        dctx.fill();
       }
-      ctx.globalCompositeOperation = "source-over";
+      dctx.globalCompositeOperation = "source-over";
     }
 
     if (snowLevel > 0.01) {
       const alphaScale = snowLevel * (0.85 + 0.3 * depth);
       for (const front of [false, true]) {
-        ctx.fillStyle = `rgba(190, 212, 235, ${(front ? 0.26 : 0.14) * alphaScale})`;
-        ctx.beginPath();
+        dctx.fillStyle = `rgba(190, 212, 235, ${(front ? 0.26 : 0.14) * alphaScale})`;
+        dctx.beginPath();
         for (const flake of flakes) {
           if (flake.front !== front) continue;
           const x = flake.x0 + Math.sin(sceneTime * 0.35 + flake.phase) * flake.drift;
-          ctx.moveTo(x + flake.r, flake.y);
-          ctx.arc(x, flake.y, flake.r, 0, Math.PI * 2);
+          dctx.moveTo(x + flake.r, flake.y);
+          dctx.arc(x, flake.y, flake.r, 0, Math.PI * 2);
         }
-        ctx.fill();
+        dctx.fill();
       }
     }
 
     if (!staticMode && bubbles.length > 0) {
-      ctx.strokeStyle = `rgba(190, 215, 240, ${0.3 * clamp01(1 - depth / 0.25)})`;
-      ctx.lineWidth = 1;
+      dctx.strokeStyle = `rgba(190, 215, 240, ${0.3 * clamp01(1 - depth / 0.25)})`;
+      dctx.lineWidth = 1;
       for (const bubble of bubbles) {
-        ctx.beginPath();
-        ctx.arc(bubble.x + Math.sin(sceneTime * 2.2 + bubble.phase) * 2.5, bubble.y, bubble.r, 0, Math.PI * 2);
-        ctx.stroke();
+        dctx.beginPath();
+        dctx.arc(bubble.x + Math.sin(sceneTime * 2.2 + bubble.phase) * 2.5, bubble.y, bubble.r, 0, Math.PI * 2);
+        dctx.stroke();
       }
     }
 
@@ -1524,19 +1536,27 @@ export function createRainEngine(
         const wave = staticMode ? 0.5 : Math.sin((Math.PI * 2 * sceneTime) / glint.period + glint.phase);
         const alpha = Math.pow(Math.max(0, wave), 3) * 0.5 * glintLevel;
         if (alpha < 0.02) continue;
-        ctx.fillStyle = `rgba(${SURFACE_GLOW}, ${alpha})`;
-        ctx.fillRect(glint.x, glint.y, 1.4, 1.4);
+        dctx.fillStyle = `rgba(${SURFACE_GLOW}, ${alpha})`;
+        dctx.fillRect(glint.x, glint.y, 1.4, 1.4);
       }
     }
 
-    ctx.restore();
+    dctx.restore();
   }
 
   function render(staticMode: boolean) {
-    const surfaceScreenY = waterRest - cameraY;
-    if (surfaceScreenY >= -(MAX_WAVE_HEIGHT + 10)) {
+    const surfaceScreenY = waterRest - scrollYCached;
+
+    // Scene canvas: painted in its own document coordinates, no translate —
+    // the browser scrolls the element. Clipped to the live region so nothing
+    // ever bleeds into the once-painted deep column below; skipped entirely
+    // once the whole live region is above the viewport (only the static
+    // column is on screen, so repainting would be invisible work).
+    if (scrollYCached < liveBottom + 40) {
       ctx.save();
-      ctx.translate(0, -cameraY);
+      ctx.beginPath();
+      ctx.rect(0, 0, width, liveBottom);
+      ctx.clip();
       ctx.fillStyle = skyGradient;
       ctx.fillRect(0, 0, width, height);
       drawCityBands();
@@ -1547,8 +1567,19 @@ export function createRainEngine(
       renderRings();
       renderSplashes();
       ctx.restore();
-    } else {
+    }
+
+    // Depth canvas: transparent at the surface; the abyss wash crossfades in
+    // over ~80px of scroll once the surface clears the frame (the old hard
+    // switch was a visible color step for one frame), then the underwater
+    // ambience draws over it.
+    dctx.clearRect(0, 0, width, height);
+    const abyssAlpha = clamp01((-surfaceScreenY - (MAX_WAVE_HEIGHT + 10)) / 80);
+    if (abyssAlpha > 0) {
+      dctx.save();
+      dctx.globalAlpha = abyssAlpha;
       renderAbyss();
+      dctx.restore();
     }
     renderUnderwater(staticMode, surfaceScreenY);
   }
@@ -1571,6 +1602,10 @@ export function createRainEngine(
     }
     if (steps === 4) accumulator = 0;
     if ((frameTick++ & 127) === 0) refreshScrollRange();
+    // Freshest scroll JS can see, every frame — scroll EVENTS lag on iOS flicks,
+    // and this drives the depth canvas's washes and the live-region skip
+    // (the scene's position itself needs nothing: the browser scrolls it).
+    scrollYCached = window.scrollY;
     updateDepth();
     render(false);
     rafId = requestAnimationFrame(frame);
