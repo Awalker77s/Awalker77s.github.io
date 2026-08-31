@@ -55,10 +55,11 @@ const NEON_VIOLET = "180, 107, 255"; // #b46bff
 const NEON_CORE = "216, 250, 255"; // #d8faff — hottest inner glow
 const HAZE_VIOLET = "47, 27, 77"; // #2f1b4d — atmospheric bands between layers
 
-// The city stands on a shore strip well above the waterline — a dark
-// embankment mass separating the neon from the sea, so the skyline never
-// reads as wading in the water.
-const SHORE_FRACTION = 0.1;
+// The city stands on a shore strip above the waterline — a dark embankment
+// mass separating the neon from the sea, so the skyline never reads as
+// wading in the water. Kept slim (was 0.1): a tall shore pushed the towers
+// up into the hero text, which mattered more than the extra elevation.
+const SHORE_FRACTION = 0.035;
 
 // City parameters from docs/research/underwater-city/city-canvas.md, fills
 // re-tuned to the indigo silhouettes the cyberpunk pass calls for.
