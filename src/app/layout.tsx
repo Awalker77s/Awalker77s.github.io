@@ -13,6 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://awalker77s.github.io"),
   title: "Alexander Walker — AI Automation & Multi-Agent Systems",
   description:
     "Applied AI student at UT Knoxville. I design multi-agent systems, LLM pipelines, and full-stack products — and ship them to real users.",
