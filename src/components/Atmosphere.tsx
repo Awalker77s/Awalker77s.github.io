@@ -85,7 +85,19 @@ export default function Atmosphere() {
       void enableSound().then(detach, () => {});
     };
     for (const name of events) window.addEventListener(name, tryStart, { passive: true });
-    return detach;
+    // Optimistic zero-gesture start: engines grant audible autoplay to some
+    // visitors (Chrome's media-engagement history, installed PWAs) — attempt a
+    // resume on arrival and let the score begin with no interaction at all.
+    // Blocked attempts stay pending or reject, and the armed gestures above
+    // still catch the first touch/key. Deferred a beat so graph construction
+    // never competes with first paint.
+    const optimistic = window.setTimeout(() => {
+      void enableSound().then(detach, () => {});
+    }, 600);
+    return () => {
+      window.clearTimeout(optimistic);
+      detach();
+    };
   }, []);
 
   useEffect(() => initSmoothScroll(), []);
