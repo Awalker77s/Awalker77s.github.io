@@ -164,7 +164,7 @@ export default function Home() {
         <footer className="border-t border-edge/60 py-10 pb-44 text-xs text-faint">
           <p>© 2026 {site.name} · built in the rain</p>
           <p className="mt-1">
-            Rain: custom canvas engine. Sound: synthesized in the Web Audio API. No libraries, no
+            Rain: custom canvas engine. Music: synthesized in the Web Audio API. No libraries, no
             recordings.
           </p>
         </footer>

@@ -1,11 +1,11 @@
-export type RainAudio = {
+export type AtmosphereAudio = {
   enable: () => Promise<void>;
   disable: () => void;
   setDepth: (depth: number) => void;
   destroy: () => void;
 };
 
-const MASTER_LEVEL = 0.32;
+const MASTER_LEVEL = 0.25;
 const FADE_IN_S = 1.2;
 const FADE_OUT_S = 0.6;
 
@@ -15,9 +15,31 @@ const FADE_OUT_S = 0.6;
 // logarithmic, so a linear sweep would bunch all the change at the deep end.
 const MUFFLE_SURFACE_HZ = 3000;
 const MUFFLE_DEEP_HZ = 300;
-const SPARKLE_LEVEL = 0.1;
-const RUMBLE_LEVEL = 0.05;
 const DEPTH_SMOOTH_S = 0.12;
+
+// Rain sits far behind the music now: a light bed, not the subject.
+const RAIN_BODY_LEVEL = 0.15;
+const SPARKLE_LEVEL = 0.035;
+const RUMBLE_LEVEL = 0.03;
+
+const KEYS_LEVEL = 0.14;
+const BASS_LEVEL = 0.11;
+const PLUCK_PEAK = 0.05;
+const CHORD_S = 8;
+const GLIDE_S = 0.12;
+const LOOKAHEAD_S = 1.2;
+const TICK_MS = 125;
+
+// Dm9 → Bbmaj9 → Gm11 → Am7 in D natural minor, beatless — voice-led so each
+// of the four key voices moves at most one scale step between chords.
+const PROGRESSION = [
+  { bass: 73.42, keys: [174.61, 220.0, 261.63, 329.63] },
+  { bass: 116.54, keys: [174.61, 220.0, 261.63, 293.66] },
+  { bass: 98.0, keys: [174.61, 220.0, 261.63, 293.66] },
+  { bass: 110.0, keys: [196.0, 220.0, 261.63, 329.63] },
+];
+// Higher voices read louder at equal gain, so the stack tapers upward.
+const VOICE_LEVELS = [0.24, 0.22, 0.2, 0.17];
 
 type Graph = {
   context: AudioContext;
@@ -31,6 +53,8 @@ type Graph = {
   muffleB: BiquadFilterNode;
   depthTrim: GainNode;
   master: GainNode;
+  keysOscs: OscillatorNode[];
+  bassOsc: OscillatorNode;
 };
 
 // Paul Kellet's pink-noise filter (music-dsp list, 1999) — white noise reads as
@@ -69,12 +93,14 @@ function lowpass(context: AudioContext, frequency: number, q: number): BiquadFil
   return filter;
 }
 
-export function createRainAudio(): RainAudio {
+export function createAtmosphereAudio(): AtmosphereAudio {
   let graph: Graph | null = null;
-  let textureTimer: number | null = null;
+  let tickTimer: number | null = null;
   let suspendTimer: number | null = null;
   let depth = 0;
   let airLevel = 1;
+  let chordIndex = 1;
+  let nextChordTime = 0;
 
   function buildGraph(): Graph {
     const context = new AudioContext();
@@ -85,7 +111,7 @@ export function createRainAudio(): RainAudio {
 
     const body = lowpass(context, 1400, 0.6);
     const bodyGain = context.createGain();
-    bodyGain.gain.value = 0.55;
+    bodyGain.gain.value = RAIN_BODY_LEVEL;
 
     const sparkle = bandpass(context, 2200, 0.7);
     const sparkleGain = context.createGain();
@@ -133,9 +159,60 @@ export function createRainAudio(): RainAudio {
     breathDepth.gain.value = 0.1;
     breathLfo.connect(breathDepth).connect(breath.gain);
 
+    // Keys: two slightly detuned oscillators per voice into a warm lowpass —
+    // the detune beat plus the wow LFO below is what reads as "tape".
+    const keysFilter = lowpass(context, 1800, 0.5);
+    const keysGain = context.createGain();
+    keysGain.gain.value = KEYS_LEVEL;
+    keysFilter.connect(keysGain).connect(muffleA);
+
+    const wow = context.createOscillator();
+    wow.type = "sine";
+    wow.frequency.value = 0.4;
+    const wowDepth = context.createGain();
+    wowDepth.gain.value = 4.5;
+    wow.connect(wowDepth);
+
+    const keysOscs: OscillatorNode[] = [];
+    PROGRESSION[0].keys.forEach((frequency, voice) => {
+      const voiceGain = context.createGain();
+      voiceGain.gain.value = VOICE_LEVELS[voice];
+      voiceGain.connect(keysFilter);
+      for (const [shape, detune] of [["triangle", 2.5], ["sine", -2.5]] as const) {
+        const osc = context.createOscillator();
+        osc.type = shape;
+        osc.frequency.value = frequency;
+        osc.detune.value = detune;
+        wowDepth.connect(osc.detune);
+        osc.connect(voiceGain);
+        keysOscs.push(osc);
+      }
+    });
+
+    const tremolo = context.createOscillator();
+    tremolo.type = "sine";
+    tremolo.frequency.value = 4.5;
+    const tremoloDepth = context.createGain();
+    tremoloDepth.gain.value = KEYS_LEVEL * 0.25;
+    tremolo.connect(tremoloDepth).connect(keysGain.gain);
+
+    const bassOsc = context.createOscillator();
+    bassOsc.type = "sine";
+    bassOsc.frequency.value = PROGRESSION[0].bass;
+    const bassGain = context.createGain();
+    bassGain.gain.value = BASS_LEVEL;
+    bassOsc.connect(bassGain).connect(muffleA);
+
     noise.start();
     gust.start();
     breathLfo.start();
+    wow.start();
+    tremolo.start();
+    bassOsc.start();
+    for (const osc of keysOscs) osc.start();
+
+    chordIndex = 1;
+    nextChordTime = context.currentTime + CHORD_S;
 
     const built: Graph = {
       context,
@@ -149,6 +226,8 @@ export function createRainAudio(): RainAudio {
       muffleB,
       depthTrim,
       master,
+      keysOscs,
+      bassOsc,
     };
     applyDepth(built);
     return built;
@@ -167,14 +246,59 @@ export function createRainAudio(): RainAudio {
     g.noise.playbackRate.setTargetAtTime(1 - 0.07 * eased, now, DEPTH_SMOOTH_S);
   }
 
-  // Sparse texture events: mid-frequency droplet "plips" plus vinyl-style
-  // crackle ticks and pops at subliminal level.
-  function startTexture(g: Graph) {
-    if (textureTimer !== null) return;
-    textureTimer = window.setInterval(() => {
+  // Retunes only the voices that move, gliding over GLIDE_S — the same
+  // oscillators run for the life of the graph, so chord changes cost nothing.
+  function scheduleChord(g: Graph, index: number, when: number) {
+    const chord = PROGRESSION[index];
+    const previous = PROGRESSION[(index + PROGRESSION.length - 1) % PROGRESSION.length];
+    chord.keys.forEach((frequency, voice) => {
+      const previousFrequency = previous.keys[voice];
+      if (frequency === previousFrequency) return;
+      for (const osc of [g.keysOscs[voice * 2], g.keysOscs[voice * 2 + 1]]) {
+        osc.frequency.setValueAtTime(previousFrequency, when);
+        osc.frequency.linearRampToValueAtTime(frequency, when + GLIDE_S);
+      }
+    });
+    if (chord.bass !== previous.bass) {
+      g.bassOsc.frequency.setValueAtTime(previous.bass, when);
+      g.bassOsc.frequency.linearRampToValueAtTime(chord.bass, when + GLIDE_S);
+    }
+  }
+
+  function schedulePluck(g: Graph) {
+    const start = g.context.currentTime + 0.02;
+    const sounding = PROGRESSION[(chordIndex + PROGRESSION.length - 1) % PROGRESSION.length];
+    const frequency = sounding.keys[Math.floor(Math.random() * sounding.keys.length)] * 2;
+    const osc = g.context.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = frequency;
+    const envelope = g.context.createGain();
+    envelope.gain.value = 0;
+    osc.connect(envelope).connect(g.muffleA);
+    const peak = PLUCK_PEAK * (0.25 + 0.75 * airLevel);
+    envelope.gain.setValueAtTime(0.0001, start);
+    envelope.gain.linearRampToValueAtTime(peak, start + 0.01);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, start + 1.2);
+    osc.start(start);
+    osc.stop(start + 1.3);
+  }
+
+  // One tick drives everything time-based: chord changes scheduled a beat
+  // ahead (so a busy main thread never lands a retune late), sparse rain
+  // plips, vinyl crackle, and occasional octave-up plucks. While the context
+  // is suspended currentTime freezes, so the chord clock holds alignment.
+  function startTicking(g: Graph) {
+    if (tickTimer !== null) return;
+    tickTimer = window.setInterval(() => {
       const now = g.context.currentTime;
-      if (Math.random() <= 0.65) {
-        const peak = (0.04 + Math.random() * 0.1) * airLevel;
+      while (nextChordTime < now + LOOKAHEAD_S) {
+        scheduleChord(g, chordIndex, nextChordTime);
+        chordIndex = (chordIndex + 1) % PROGRESSION.length;
+        nextChordTime += CHORD_S;
+      }
+      if (g.context.state !== "running") return;
+      if (Math.random() < 0.28) {
+        const peak = (0.02 + Math.random() * 0.05) * airLevel;
         if (peak > 0.001) {
           g.patter.frequency.setValueAtTime(800 + Math.random() * 1000, now);
           const gain = g.patterGain.gain;
@@ -188,23 +312,16 @@ export function createRainAudio(): RainAudio {
       const isTick = roll < 0.36;
       const isPop = !isTick && roll < 0.4;
       if (isTick || isPop) {
-        const peak = (isTick ? 0.004 + Math.random() * 0.003 : 0.012) * airLevel;
-        if (peak > 0.0005) {
-          const gain = g.crackleGain.gain;
-          gain.cancelScheduledValues(now);
-          gain.setValueAtTime(0.0001, now);
-          gain.linearRampToValueAtTime(peak, now + 0.001);
-          gain.exponentialRampToValueAtTime(0.0001, now + (isTick ? 0.003 + Math.random() * 0.004 : 0.016));
-        }
+        // Unscaled by depth: the crackle belongs to the "record", not the air.
+        const peak = isTick ? 0.004 + Math.random() * 0.003 : 0.012;
+        const gain = g.crackleGain.gain;
+        gain.cancelScheduledValues(now);
+        gain.setValueAtTime(0.0001, now);
+        gain.linearRampToValueAtTime(peak, now + 0.001);
+        gain.exponentialRampToValueAtTime(0.0001, now + (isTick ? 0.003 + Math.random() * 0.004 : 0.016));
       }
-    }, 110);
-  }
-
-  function stopTexture() {
-    if (textureTimer !== null) {
-      clearInterval(textureTimer);
-      textureTimer = null;
-    }
+      if (Math.random() < 0.025) schedulePluck(g);
+    }, TICK_MS);
   }
 
   async function enable() {
@@ -217,7 +334,7 @@ export function createRainAudio(): RainAudio {
     graph ??= buildGraph();
     const g = graph;
     await g.context.resume();
-    startTexture(g);
+    startTicking(g);
     const now = g.context.currentTime;
     g.master.gain.cancelScheduledValues(now);
     g.master.gain.setValueAtTime(Math.max(g.master.gain.value, 0.0001), now);
@@ -227,7 +344,6 @@ export function createRainAudio(): RainAudio {
   function disable() {
     const g = graph;
     if (!g) return;
-    stopTexture();
     const now = g.context.currentTime;
     g.master.gain.cancelScheduledValues(now);
     g.master.gain.setValueAtTime(Math.max(g.master.gain.value, 0.0001), now);
@@ -244,7 +360,10 @@ export function createRainAudio(): RainAudio {
   }
 
   function destroy() {
-    stopTexture();
+    if (tickTimer !== null) {
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
     if (suspendTimer !== null) {
       clearTimeout(suspendTimer);
       suspendTimer = null;

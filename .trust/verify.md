@@ -11,13 +11,15 @@ Read-only, before first drive: GET `http://localhost:3000/` returns 200, page co
 ## Drive
 Playwright headless against `http://localhost:3000` (repo devDep — `createRequire("<repo>/package.json")` then `require("playwright")`; launch args `--disable-gpu --use-angle=swiftshader` so the canvas rasterizes). Browser pane works for interactive spot checks. Stable handles:
 - Rain toggle: button `aria-label="Toggle rain animation"` (aria-pressed reflects state)
-- Sound toggle: button `aria-label="Toggle rain sound"` (aria-pressed reflects state)
+- Music toggle: button `aria-label="Toggle background music"` (aria-pressed reflects state)
 - Sections: anchors `#work #experience #skills #about #contact`; nav links carry the same names.
-- Audio evidence: the AudioContext and its nodes are closed over, so patch before first gesture:
+- Audio evidence: the AudioContext and its nodes are closed over, so patch before first gesture (use `ctx.addInitScript` so the patch survives reloads):
   `const R = window.AudioContext; window.__ac = []; window.AudioContext = class extends R { constructor(...a){ super(...a); window.__ac.push(this); } }`
   `const cf = AudioContext.prototype.createBiquadFilter; window.__filters = []; AudioContext.prototype.createBiquadFilter = function(...a){ const f = cf.apply(this, a); window.__filters.push(f); return f; }`
-  then click the sound toggle and read `window.__ac[0].state`; muffle sweep via the lowpass frequencies in `window.__filters`.
+  `const co = AudioContext.prototype.createOscillator; window.__oscs = []; AudioContext.prototype.createOscillator = function(...a){ const o = co.apply(this, a); window.__oscs.push(o); return o; }`
+  then click the music toggle and read `window.__ac[0].state`; chord voicing via `window.__oscs` frequency values; muffle sweep via `window.__filters`. Five lowpasses exist (rain body ~1400 gust-swept, rumble 90, keys 1800, plus the muffle pair) — the muffle pair is the two reading ~3000 at surface; capture those two by index there and re-read the same indices at depth.
 - Descent: `document.documentElement.style.scrollBehavior = "auto"` first (CSS smooth-scroll otherwise animates programmatic scrolls; the override dies on reload), then `window.scrollTo(0, y)`, wait ~0.8s, screenshot. Depth token: `getComputedStyle(document.documentElement).getPropertyValue("--depth")`.
+- Smooth scroll: attach probe = dispatch a synthetic cancelable `WheelEvent` and read `defaultPrevented` (true when the smoother is attached; false under reduced motion). Real glides: `page.mouse.wheel(0, 120)` fires trusted cancelable wheels; record per-frame `window.scrollY` in a rAF loop and assert dense small steps, strictly monotonic (scroll.ts clamps dt ≥ 0, so any backward frame is a regression). Let the probe's own glide fully settle (~1.2s) before starting a trace. Anchor navigation stays native CSS smooth — test with the explicit `a[href="#work"]`; `a[href^="#"]` matches the nav logo `href="#"` and `querySelector("#")` throws.
 - Persistence: localStorage keys `rain-motion` / `rain-sound`, values `"on"`/`"off"`; reload and re-check aria-pressed.
 - Live-site screenshots for project cards: `node scripts/shoot.mjs` (writes `public/projects/*.png`, 1600×1000).
 
@@ -33,3 +35,5 @@ Screenshots with the page identity visible (nav name + section content); console
 - Synthetic pane clicks count as trusted user gestures in Chrome, so the autoplay gate does open for them.
 - Injected patches (AudioContext/BiquadFilter wrappers, scrollBehavior override) die on any page reload — re-apply before the next gesture/scroll.
 - Prefer `element.click()` via javascript_tool for the toggles: pane left_click can fire multiple event pairs, and the JS click still counts as a trusted gesture.
+- rAF callback timestamps mark the frame's start and can PRECEDE a `performance.now()` captured in the input handler that scheduled the callback — a glide's first frame can compute negative dt (scroll.ts clamps dt to [0, 0.1] for exactly this). Test wheel glides from a non-zero resting y (e.g. after the probe glide settles near 120): at y=0 the browser clamps `scrollTo` below zero and a backward jerk hides. To name a mystery scroll writer, wrap `scrollTo`/`scrollBy`/`scrollTop` at document-start with stack capture and log per-frame `scrollHeight` (constant height rules out layout shift/anchoring).
+- Main-context `goto`/`reload`: use `waitUntil: "domcontentloaded"` + `waitForSelector` — `networkidle` is flaky against the dev server's HMR socket.

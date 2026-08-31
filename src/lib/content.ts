@@ -162,5 +162,5 @@ export const skillGroups = [
 export const about = [
   "I'm an Applied AI student at UT Knoxville. Most of my time goes into building with AI agents — multi-agent systems, orchestration, and the validation layers that make their output trustworthy — and into studying how people actually get good at using them.",
   "What I care about most is the gap between what AI models can do and what actually gets deployed inside a real business. Everything above is a real product: live users, real clients, honest evaluation numbers.",
-  "This site is part of the portfolio too: the rain is a custom canvas engine — a spring-column water surface with drop impacts and splash particles — and the sound is synthesized from filtered noise in the Web Audio API. No animation libraries, no audio files.",
+  "This site is part of the portfolio too: the rain is a custom canvas engine — a spring-column water surface with drop impacts and splash particles — and the lofi soundtrack is synthesized live in the Web Audio API, chords and rain both. No animation libraries, no audio files.",
 ];

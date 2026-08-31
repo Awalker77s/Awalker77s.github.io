@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createRainEngine, type RainEngine } from "@/lib/rain/engine";
-import { createRainAudio, type RainAudio } from "@/lib/rain/audio";
+import { createAtmosphereAudio, type AtmosphereAudio } from "@/lib/rain/audio";
+import { initSmoothScroll } from "@/lib/scroll";
 
 const MOTION_KEY = "rain-motion";
 const SOUND_KEY = "rain-sound";
@@ -10,13 +11,13 @@ const SOUND_KEY = "rain-sound";
 export default function Atmosphere() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<RainEngine | null>(null);
-  const audioRef = useRef<RainAudio | null>(null);
+  const audioRef = useRef<AtmosphereAudio | null>(null);
   const depthRef = useRef(0);
   const [motionOn, setMotionOn] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
 
   function enableSound() {
-    audioRef.current ??= createRainAudio();
+    audioRef.current ??= createAtmosphereAudio();
     audioRef.current.setDepth(depthRef.current);
     setSoundOn(true);
     return audioRef.current.enable();
@@ -60,6 +61,8 @@ export default function Atmosphere() {
     return () => window.removeEventListener("pointerdown", resumeOnFirstGesture);
   }, []);
 
+  useEffect(() => initSmoothScroll(), []);
+
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -101,7 +104,7 @@ export default function Atmosphere() {
           type="button"
           onClick={toggleSound}
           aria-pressed={soundOn}
-          aria-label="Toggle rain sound"
+          aria-label="Toggle background music"
           className={`${pill} ${soundOn ? pillOn : pillOff}`}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -118,7 +121,7 @@ export default function Atmosphere() {
               </>
             )}
           </svg>
-          sound
+          music
         </button>
         <button
           type="button"
