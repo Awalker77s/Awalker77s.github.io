@@ -10,13 +10,12 @@ export type Project = {
   liveUrl?: string;
   repoUrl?: string;
   note?: string;
-  lesson?: string;
 };
 
 export const site = {
   name: "Alexander Walker",
   role: "AI Automation · Multi-Agent Systems · Orchestration",
-  headline: "I build with AI agents — and I'm studying them too.",
+  headline: "I build AI systems that ship — and prove they work.",
   summary:
     "Applied AI student at UT Knoxville. I care most about the gap between what AI models can do and what actually gets deployed inside a real business — so I build products that close it, and ship them to real users.",
   email: "awalker200677@gmail.com",
@@ -24,26 +23,9 @@ export const site = {
   linkedin: "https://www.linkedin.com/in/alexander-walker-8b2694243",
 };
 
-// Ordered by importance, not date — the descent starts at the flagship.
+// Ordered by what he's aiming for — AI automation and agent systems lead,
+// the descent starts at the flagship.
 export const projects: Project[] = [
-  {
-    name: "FIGHT — Shadow League",
-    badge: "in development",
-    tagline: "Your training footage becomes your fighter.",
-    description:
-      "Film a shadowboxing session and a from-scratch computer-vision pipeline (GEM-X → SOMA skeletons) turns it into your \"Shadow\" — a motion-captured 3D fighter in a deterministic 60 Hz fighting game with full broadcast presentation. Solo-built, from the ML pipeline to the game engine.",
-    points: [
-      "Real captured footage drives the fighter: watch your own filmed session replayed on a 3D skeleton in the Film Room",
-      "Deterministic client-side fight engine — guard, slips, counters, stamina, knockdowns, three-round bouts with judges",
-      "Broadcast layer: fighter intros, round cards, live HUD, KO and decision overlays, three-tier AI opponents",
-      "Loadout economy with an equip/store/workshop hub and a live 3D preview of every move you touch",
-    ],
-    stack: ["Next.js", "React", "TypeScript", "Three.js", "Tailwind", "Python (CV pipeline)"],
-    image: { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 1000 },
-    note: "Async tournaments are the next milestone.",
-    lesson:
-      "I started with full physics self-play RL and had to walk it back to kinematic replay (it's in the decision record). Shipping the game loop first would have found the fun months earlier.",
-  },
   {
     name: "Drydock",
     badge: "local-first",
@@ -59,8 +41,6 @@ export const projects: Project[] = [
     stack: ["Electron", "TypeScript", "React", "Chrome MV3", "Windows UIA", "Ollama", "Claude Code"],
     image: { src: "/projects/drydock.png", alt: "Drydock — automation run timeline with token and cost receipt", width: 1600, height: 1000 },
     note: "Private build — ask me for a walkthrough.",
-    lesson:
-      "I'd get a code-signing identity on day one. The app is real, but an unsigned Windows installer means SmartScreen stops anyone else from just trying it.",
   },
   {
     name: "trust-stack",
@@ -75,18 +55,28 @@ export const projects: Project[] = [
       "Maker–checker separation: a fresh-context agent reviews what the builder produced, and it has caught real bypasses",
     ],
     stack: ["Node", "Claude Code", "Hooks API", "Zero dependencies"],
-    terminal: [
-      "$ claude plugin validate . --strict",
-      "  ✔ validation passed",
-      "$ node tests/run.js",
-      "  hygiene · guards · gate-guard · lint ... all green",
-      "  skills 28 · hooks 4 · routing agents 3",
-      "  evidence: 79 graded adversarial sims",
-      "$ git log --oneline -1",
-      "  b43b451 v0.6.0 — the risk layer",
+    image: {
+      src: "/projects/truststack.png",
+      alt: "Lane Console diagram of trust-stack: LOW, MED, and HIGH risk lanes pass through a dashed skills band (28 skills — policy the model reads) into a solid hooks wall (4 hooks — enforcement it cannot skip); LOW auto-merges, MED is allowed, HIGH trips a breaker and bends to human approval, with an append-only ledger rail on the right.",
+      width: 1600,
+      height: 780,
+    },
+  },
+  {
+    name: "FIGHT — Shadow League",
+    badge: "in development",
+    tagline: "Your training footage becomes your fighter.",
+    description:
+      "Film a shadowboxing session and a from-scratch computer-vision pipeline (GEM-X → SOMA skeletons) turns it into your \"Shadow\" — a motion-captured 3D fighter in a deterministic 60 Hz fighting game with full broadcast presentation. Solo-built, from the ML pipeline to the game engine.",
+    points: [
+      "Real captured footage drives the fighter: watch your own filmed session replayed on a 3D skeleton in the Film Room",
+      "Deterministic client-side fight engine — guard, slips, counters, stamina, knockdowns, three-round bouts with judges",
+      "Broadcast layer: fighter intros, round cards, live HUD, KO and decision overlays, three-tier AI opponents",
+      "Loadout economy with an equip/store/workshop hub and a live 3D preview of every move you touch",
     ],
-    lesson:
-      "Blind the graders from the start. My first eval pass let the rubric's hopes leak into the grades — only the blinded re-runs are numbers I trust.",
+    stack: ["Next.js", "React", "TypeScript", "Three.js", "Tailwind", "Python (CV pipeline)"],
+    image: { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 1000 },
+    note: "Async tournaments are the next milestone.",
   },
   {
     name: "Mivora",
@@ -119,8 +109,6 @@ export const projects: Project[] = [
     stack: ["Python", "PyMuPDF", "Tesseract", "Sentence-Transformers", "FAISS", "OpenAI", "Gradio"],
     image: { src: "/projects/rag.png", alt: "Document Intelligence — six-stage RAG pipeline architecture", width: 1600, height: 1000 },
     repoUrl: "https://github.com/Awalker77s/Document-Intelligence-Pipeline",
-    lesson:
-      "Write the README before the code. The pipeline worked, but an empty README made a working repo look abandoned to every visitor who clicked through.",
   },
   {
     name: "Brain",

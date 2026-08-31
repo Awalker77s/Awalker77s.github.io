@@ -48,14 +48,6 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
             </li>
           ))}
         </ul>
-        {project.lesson && (
-          <p className="mt-4 border-l-2 border-edge pl-3 text-[13px] leading-relaxed text-faint">
-            <span className="font-mono text-[11px] uppercase tracking-wider text-accent/80">
-              What I&apos;d change ·{" "}
-            </span>
-            {project.lesson}
-          </p>
-        )}
         <div className="mt-5 flex flex-wrap gap-2">
           {project.stack.map((tech) => (
             <span
