@@ -35,7 +35,15 @@ export default function Home() {
       </nav>
 
       <main className="relative mx-auto max-w-5xl px-6">
-        <section className="flex min-h-dvh flex-col justify-start pb-24 pt-28 md:pt-32">
+        {/* min-h-screen (100vh = LARGE viewport on phones), never the
+            dynamic-viewport unit: that one shrinks while the browser toolbar
+            is visible, which pulled the projects up to the waterline on iOS
+            Safari AND re-laid-out the whole page on every toolbar collapse
+            mid-scroll. The scene's waterline is anchored to the large
+            viewport — the hero must be sized against the same stable unit.
+            (Do not even name the forbidden class in comments: Tailwind scans
+            them and would emit the utility, tripping the layout guard.) */}
+        <section className="flex min-h-screen flex-col justify-start pb-24 pt-28 md:pt-32">
           <p className="font-mono text-xs uppercase tracking-widest text-accent md:text-sm">
             {site.role}
           </p>
