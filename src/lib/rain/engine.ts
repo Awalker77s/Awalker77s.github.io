@@ -151,13 +151,22 @@ function rampRgb(t: number): Rgb {
   return DEPTH_RAMP[DEPTH_RAMP.length - 1].rgb;
 }
 
-export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: number) => void): RainEngine {
+export function createRainEngine(
+  canvas: HTMLCanvasElement,
+  onDepth?: (depth: number) => void,
+  blimpSkills: string[] = [],
+): RainEngine {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("rain engine requires a 2d canvas context");
   const ctx = context;
+  const coarsePointer = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
 
   let width = 0;
   let height = 0;
+  let isMobile = false;
+  let bakeDpr = 1;
+  let builtCityWidth = -1;
+  let builtCityDpr = -1;
   let waterRest = 0;
   let groundY = 0;
   let columnCount = 0;
@@ -167,6 +176,12 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   let rightDeltas = new Float32Array(0);
   let skyGradient: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
   let hazeGradient: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
+  // City light-pollution bouncing off the low cloud deck: two radial washes
+  // biased right-of-center, where the hero text isn't. This is what keeps the
+  // sky from cutting hard from skyline to flat black.
+  let cityGlowViolet: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
+  let cityGlowCyan: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
+  let spire: { x: number; topY: number; tipY: number } | null = null;
   let fogSprite: HTMLCanvasElement | null = null;
 
   const drops: Drop[] = [];
@@ -203,6 +218,22 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   let carSpawnIn = 4;
   let bubbleIn = 3;
 
+  // One skill blimp crosses the top band at a time, cycling the skill list.
+  type SkillBlimp = {
+    x: number;
+    dir: 1 | -1;
+    speed: number;
+    sprite: HTMLCanvasElement;
+    w: number;
+    h: number;
+    bobPhase: number;
+  };
+  const BLIMP_ACCENTS = [NEON_CYAN, NEON_MAGENTA, NEON_AMBER, NEON_VIOLET];
+  let blimp: SkillBlimp | null = null;
+  let blimpGapIn = 4;
+  let blimpSkillIndex = 0;
+  let blimpSpawnDir: 1 | -1 = 1;
+
   let scrollYCached = 0;
   let scrollRange = 1;
   let submerge = 0;
@@ -228,7 +259,11 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     if (rect.width === width && rect.height === height) return;
     width = rect.width;
     height = rect.height;
-    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+    isMobile = width < 768;
+    // Mobile GPUs pay per pixel: cap DPR at 1.5 on small/touch screens —
+    // visually indistinguishable at phone sizes, ~44% fewer pixels than 2.
+    const dpr = Math.min(window.devicePixelRatio || 1, isMobile || coarsePointer ? 1.5 : MAX_DPR);
+    bakeDpr = dpr;
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -245,6 +280,13 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     skyGradient = ctx.createLinearGradient(0, 0, 0, height);
     skyGradient.addColorStop(0, SKY_TOP);
     skyGradient.addColorStop(1, SKY_BOTTOM);
+    cityGlowViolet = ctx.createRadialGradient(width * 0.68, groundY + 10, 0, width * 0.68, groundY + 10, height * 0.55);
+    cityGlowViolet.addColorStop(0, `rgba(${HAZE_VIOLET}, 0.34)`);
+    cityGlowViolet.addColorStop(0.55, `rgba(${HAZE_VIOLET}, 0.12)`);
+    cityGlowViolet.addColorStop(1, `rgba(${HAZE_VIOLET}, 0)`);
+    cityGlowCyan = ctx.createRadialGradient(width * 0.82, groundY, 0, width * 0.82, groundY, height * 0.3);
+    cityGlowCyan.addColorStop(0, `rgba(${NEON_CYAN}, 0.05)`);
+    cityGlowCyan.addColorStop(1, `rgba(${NEON_CYAN}, 0)`);
     // Violet atmosphere pooling between the parallax layers — the haze is what
     // makes the depth read (and half the cyberpunk look).
     const farTop = groundY - height * CITY_BANDS[0].heightFrac;
@@ -268,11 +310,152 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       fogCtx.fillRect(0, 0, fogRadius * 2, fogRadius * 2);
     }
 
-    buildCity(dpr);
+    // iOS Safari's toolbar collapse fires height-only resizes constantly
+    // while scrolling; rebaking the whole city for those wastes real CPU on
+    // exactly the frames that can least afford it. Bands keep their old
+    // pixel heights on a height-only change (they're bottom-anchored at the
+    // new groundY, so the few-percent drift is invisible); everything
+    // height-derived above was just rebuilt regardless.
+    if (width !== builtCityWidth || dpr !== builtCityDpr) {
+      buildCity(dpr);
+      builtCityWidth = width;
+      builtCityDpr = dpr;
+    }
 
     drops.length = 0;
     splashes.length = 0;
     rings.length = 0;
+  }
+
+  function makeSpriteCanvas(w: number, h: number, dpr: number) {
+    const sprite = document.createElement("canvas");
+    sprite.width = Math.max(1, Math.round(w * dpr));
+    sprite.height = Math.max(1, Math.round(h * dpr));
+    const spriteCtx = sprite.getContext("2d");
+    if (!spriteCtx) throw new Error("2d context unavailable for sprite");
+    spriteCtx.scale(dpr, dpr);
+    return { canvas: sprite, ctx: spriteCtx };
+  }
+
+  // Bakes one complete blimp (hull + fins + pods + lit skill screen) into a
+  // sprite. One bake per spawn (~every 20-40s), one canvas alive at a time —
+  // so per-skill sprite caches and their memory cost are unnecessary, and the
+  // screen's glow is baked here rather than spending runtime shadowBlur.
+  function bakeBlimpSprite(skill: string, dir: 1 | -1, accent: string) {
+    const scale = isMobile ? 0.75 : 1;
+    const font = `600 ${Math.round(13 * scale)}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+    const probe = makeSpriteCanvas(8, 8, 1).ctx;
+    probe.font = font;
+    const screenW = probe.measureText(skill).width + 26 * scale;
+    const hullL = Math.min(210 * scale, Math.max(132 * scale, screenW / 0.7));
+    const hullH = hullL * 0.16;
+    const pad = 14 * scale;
+    const w = hullL + pad * 2;
+    const h = hullH * 2.4;
+    const { canvas: spriteCanvas, ctx: c } = makeSpriteCanvas(w, h, bakeDpr);
+    const cx = w / 2;
+    const cy = h / 2;
+
+    // Hull, fins, pods, and lights face the travel direction (mirrored for
+    // leftward flights); the screen is drawn after the restore so its text
+    // never mirrors.
+    c.save();
+    if (dir < 0) {
+      c.translate(w, 0);
+      c.scale(-1, 1);
+    }
+    const hullGrad = c.createLinearGradient(0, cy - hullH / 2, 0, cy + hullH / 2);
+    hullGrad.addColorStop(0, "#16233c");
+    hullGrad.addColorStop(0.45, "#0d1626");
+    hullGrad.addColorStop(1, "#080d17");
+    c.fillStyle = hullGrad;
+    c.beginPath();
+    c.ellipse(cx, cy, hullL / 2, hullH / 2, 0, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = `rgba(${accent}, 0.4)`;
+    c.lineWidth = 1;
+    c.stroke();
+    // Twin canted tail fins.
+    c.fillStyle = "#101b30";
+    c.strokeStyle = `rgba(${NEON_CYAN}, 0.25)`;
+    for (const flip of [-1, 1]) {
+      c.beginPath();
+      c.moveTo(cx - hullL * 0.34, cy + flip * hullH * 0.2);
+      c.lineTo(cx - hullL * 0.52 - 4 * scale, cy + flip * hullH * 1.05);
+      c.lineTo(cx - hullL * 0.44, cy + flip * hullH * 0.1);
+      c.closePath();
+      c.fill();
+      c.stroke();
+    }
+    // Engine pods slung under the hull, amber exhaust dots trailing.
+    for (const px of [cx - hullL * 0.16, cx + hullL * 0.14]) {
+      c.fillStyle = "#0b1120";
+      c.beginPath();
+      c.ellipse(px, cy + hullH * 0.62, 7 * scale, 3 * scale, 0, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = `rgba(${NEON_AMBER}, 0.7)`;
+      c.fillRect(px - 9 * scale, cy + hullH * 0.62 - 0.75, 1.5, 1.5);
+    }
+    // Nose light (cyan, baked halo) and tail-fin light (magenta).
+    c.fillStyle = `rgba(${NEON_CYAN}, 0.25)`;
+    c.beginPath();
+    c.arc(cx + hullL * 0.48, cy, 3, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = `rgba(${NEON_CYAN}, 0.8)`;
+    c.beginPath();
+    c.arc(cx + hullL * 0.48, cy, 1.3, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = `rgba(${NEON_MAGENTA}, 0.6)`;
+    c.fillRect(cx - hullL * 0.51, cy - hullH * 1.02, 1.4, 1.4);
+    c.restore();
+
+    // The skill screen: dark glass, scanlines, accent frame, glowing label.
+    const sh = hullH * 0.85;
+    const sx = cx - screenW / 2;
+    const sy = cy - sh / 2;
+    const screenBg = c.createLinearGradient(0, sy, 0, sy + sh);
+    screenBg.addColorStop(0, "#050a14");
+    screenBg.addColorStop(1, "#0a1626");
+    c.fillStyle = screenBg;
+    c.fillRect(sx, sy, screenW, sh);
+    c.fillStyle = `rgba(${NEON_CYAN}, 0.05)`;
+    for (let ly = sy + 1.5; ly < sy + sh; ly += 3) c.fillRect(sx, ly, screenW, 1);
+    c.strokeStyle = `rgba(${accent}, 0.55)`;
+    c.lineWidth = 1;
+    c.strokeRect(sx + 0.5, sy + 0.5, screenW - 1, sh - 1);
+    c.font = font;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.shadowColor = `rgba(${accent}, 0.8)`;
+    c.shadowBlur = 4;
+    c.fillStyle = `rgba(${NEON_CORE}, 0.88)`;
+    c.fillText(skill, cx, cy + 0.5);
+    c.shadowBlur = 0;
+
+    return { canvas: spriteCanvas, w, h };
+  }
+
+  function blimpLaneY() {
+    // Between the nav bar and the hero eyebrow on every viewport.
+    return Math.max(74, height * 0.095);
+  }
+
+  function spawnBlimp() {
+    const skill = blimpSkills[blimpSkillIndex % blimpSkills.length];
+    const accent = BLIMP_ACCENTS[blimpSkillIndex % BLIMP_ACCENTS.length];
+    blimpSkillIndex++;
+    const dir = blimpSpawnDir;
+    blimpSpawnDir = dir === 1 ? -1 : 1;
+    const baked = bakeBlimpSprite(skill, dir, accent);
+    blimp = {
+      x: dir > 0 ? -baked.w - 10 : width + 10,
+      dir,
+      speed: (isMobile ? 12 : 16) + Math.random() * (isMobile ? 3 : 6),
+      sprite: baked.canvas,
+      w: baked.w,
+      h: baked.h,
+      bobPhase: Math.random() * Math.PI * 2,
+    };
   }
 
   function makeBandCanvas(bandHeight: number, dpr: number) {
@@ -501,6 +684,23 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       );
       near.ctx.fillStyle = nearSpec.fill;
     }
+    // Signal spire: one near-band tower right-of-center gets a thin antenna
+    // reaching into the empty upper-right sky. Drawn live in the overlays —
+    // it pokes far above this band's canvas, so it can't be baked here.
+    let mast: { x: number; w: number; h: number } | null = null;
+    for (const b of nearBuildings) {
+      const cx = b.x + b.w / 2;
+      if (cx < width * 0.7 || cx > width * 0.88) continue;
+      if (!mast || b.h > mast.h) mast = b;
+    }
+    spire = mast
+      ? {
+          x: Math.round(mast.x + mast.w / 2) + 0.5,
+          topY: groundY - mast.h,
+          tipY: Math.max(height * 0.14, groundY - mast.h - height * 0.26),
+        }
+      : null;
+
     // Street-level neon bounce pooling at the base of the near band.
     const wash = near.ctx.createLinearGradient(0, near.height * 0.85, 0, near.height);
     wash.addColorStop(0, `rgba(${NEON_CYAN}, 0)`);
@@ -787,10 +987,25 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       }
     }
 
+    // One blimp at a time crossing the top band; the sky pauses (not
+    // despawns) while the camera is underwater.
+    if (blimpSkills.length > 0 && submerge < 0.98) {
+      if (blimp) {
+        blimp.x += blimp.dir * blimp.speed * SIM_STEP;
+        if (blimp.x > width + 20 || blimp.x + blimp.w < -20) {
+          blimp = null;
+          blimpGapIn = 10 + Math.random() * 12;
+        }
+      } else {
+        blimpGapIn -= SIM_STEP;
+        if (blimpGapIn <= 0) spawnBlimp();
+      }
+    }
+
     carSpawnIn -= SIM_STEP;
     if (carSpawnIn <= 0) {
       carSpawnIn = 6 + Math.random() * 8;
-      if (Math.random() >= 0.2 && cars.length < MAX_CARS) {
+      if (Math.random() >= 0.2 && cars.length < (isMobile ? 1 : MAX_CARS)) {
         const laneIndex = Math.random() < 0.5 ? 0 : 1;
         const lane = CAR_LANES[laneIndex];
         cars.push({
@@ -855,8 +1070,10 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     depth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
     const eased = submerge * submerge * (3 - 2 * submerge);
     // Margin covers physics chop + the additive swell so no crest peeks back
-    // into frame at full submerge (max swell ~0.12 * water band).
-    cameraY = eased * (waterRest + MAX_WAVE_HEIGHT + 40);
+    // into frame at full submerge. Scale-invariant: max swell amplitude is
+    // 0.12 of the water band, which grows with viewport height (a fixed
+    // margin was mathematically exceeded above ~1310px-tall viewports).
+    cameraY = eased * (waterRest + MAX_WAVE_HEIGHT + height * WATER_FRACTION * 0.12 + 8);
     if (onDepth) {
       const combined = clamp01(submerge * 0.4 + depth * 0.6);
       if (lastEmittedDepth < 0 || Math.abs(combined - lastEmittedDepth) > 0.003) {
@@ -894,6 +1111,10 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
 
   function drawCityBands() {
     if (!cityFar || !cityMid || !cityNear || !shoreBand) return;
+    ctx.fillStyle = cityGlowViolet;
+    ctx.fillRect(0, 0, width, groundY);
+    ctx.fillStyle = cityGlowCyan;
+    ctx.fillRect(0, 0, width, groundY);
     ctx.drawImage(cityFar.canvas, 0, Math.floor(groundY - cityFar.height), width, cityFar.height);
     ctx.drawImage(cityMid.canvas, 0, Math.floor(groundY - cityMid.height), width, cityMid.height);
     ctx.fillStyle = hazeGradient;
@@ -919,6 +1140,31 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
       ctx.fillStyle = `rgba(${SURFACE_GLOW}, ${pulse})`;
       ctx.beginPath();
       ctx.arc(beacon.x, beacon.y, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (blimp) {
+      const bobAmp = isMobile ? 3 : 5;
+      const y = blimpLaneY() + Math.sin((Math.PI * 2 * sceneTime) / 7 + blimp.bobPhase) * bobAmp - blimp.h / 2;
+      ctx.drawImage(blimp.sprite, blimp.x, y, blimp.w, blimp.h);
+    }
+    if (spire) {
+      ctx.strokeStyle = `rgba(${STREAK_COLOR}, 0.16)`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(spire.x, spire.topY);
+      ctx.lineTo(spire.x, spire.tipY);
+      ctx.stroke();
+      const midY = spire.tipY + (spire.topY - spire.tipY) * 0.45;
+      ctx.fillStyle = `rgba(${NEON_CYAN}, 0.35)`;
+      ctx.fillRect(spire.x - 0.7, midY, 1.4, 1.4);
+      const pulse = staticMode ? 0.4 : 0.22 + 0.4 * (0.5 + 0.5 * Math.sin((Math.PI * 2 * sceneTime) / 6));
+      ctx.fillStyle = `rgba(${NEON_AMBER}, ${pulse * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(spire.x, spire.tipY, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(${NEON_AMBER}, ${pulse})`;
+      ctx.beginPath();
+      ctx.arc(spire.x, spire.tipY, 1.3, 0, Math.PI * 2);
       ctx.fill();
     }
     // The two hero signs are the only live glow in the scene — everything else
@@ -978,16 +1224,20 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
 
     // Back swell layer: slower, smaller, a touch higher — parallax makes the
     // main surface read as the near edge of a body of water, not a line.
-    ctx.beginPath();
-    ctx.moveTo(0, waterRest + 30);
-    for (let i = 0; i < columnCount; i++) {
-      const x = i * COLUMN_SPACING;
-      ctx.lineTo(x, waterRest - 5 + heights[i] * 0.5 + swellAt(x, 0.5, 0.6));
+    // Skipped on mobile: at phone widths the parallax sliver is ~2px of
+    // barely-visible fill that still costs a per-column sine pass.
+    if (!isMobile) {
+      ctx.beginPath();
+      ctx.moveTo(0, waterRest + 30);
+      for (let i = 0; i < columnCount; i++) {
+        const x = i * COLUMN_SPACING;
+        ctx.lineTo(x, waterRest - 5 + heights[i] * 0.5 + swellAt(x, 0.5, 0.6));
+      }
+      ctx.lineTo(width, waterRest + 30);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(9, 16, 30, 0.9)";
+      ctx.fill();
     }
-    ctx.lineTo(width, waterRest + 30);
-    ctx.closePath();
-    ctx.fillStyle = "rgba(9, 16, 30, 0.9)";
-    ctx.fill();
 
     // Main surface polyline (physics heights + visual swell), cached for the
     // stroke/foam passes below.
@@ -1008,7 +1258,7 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     // Neon skyline reflection: narrow columns of the baked flipped sprite,
     // each riding its own column's surface so the image shimmers with the
     // waves. Skipped once mostly submerged — the surface has left the frame.
-    if (reflectionSprite && submerge < 0.6) {
+    if (reflectionSprite && !isMobile && submerge < 0.6) {
       const colW = 7;
       const scale = reflectionSprite.width / width;
       const srcH = reflectionSprite.height / scale;
@@ -1298,6 +1548,9 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
   }
 
   window.addEventListener("resize", handleResize);
+  // iOS Safari's dynamic toolbar is inconsistent about firing plain resize;
+  // visualViewport is the reliable signal for that class of height change.
+  window.visualViewport?.addEventListener("resize", handleResize);
   window.addEventListener("scroll", handleScroll, { passive: true });
   document.addEventListener("visibilitychange", handleVisibilityChange);
 
@@ -1306,6 +1559,7 @@ export function createRainEngine(canvas: HTMLCanvasElement, onDepth?: (depth: nu
     window.clearTimeout(resizeTimer);
     cancelAnimationFrame(staticRafId);
     window.removeEventListener("resize", handleResize);
+    window.visualViewport?.removeEventListener("resize", handleResize);
     window.removeEventListener("scroll", handleScroll);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
   }
