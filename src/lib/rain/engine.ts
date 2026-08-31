@@ -261,6 +261,9 @@ export function createRainEngine(
     refreshScrollRange();
     const rect = canvas.getBoundingClientRect();
     if (rect.width === width && rect.height === height) return;
+    const prevGroundY = groundY;
+    const prevWaterRest = waterRest;
+    const prevColumnCount = columnCount;
     width = rect.width;
     height = rect.height;
     isMobile = width < 768;
@@ -275,11 +278,16 @@ export function createRainEngine(
     waterRest = height * (1 - WATER_FRACTION);
     groundY = waterRest - height * SHORE_FRACTION;
     columnCount = Math.ceil(width / COLUMN_SPACING) + 1;
-    heights = new Float32Array(columnCount);
-    surfaceYs = new Float32Array(columnCount);
-    velocities = new Float32Array(columnCount);
-    leftDeltas = new Float32Array(columnCount);
-    rightDeltas = new Float32Array(columnCount);
+    // Ripple state survives any resize that keeps the column count (all
+    // height-only changes): reallocating here flattened the surface on every
+    // browser-chrome resize, a visible pop mid-scroll.
+    if (columnCount !== prevColumnCount) {
+      heights = new Float32Array(columnCount);
+      surfaceYs = new Float32Array(columnCount);
+      velocities = new Float32Array(columnCount);
+      leftDeltas = new Float32Array(columnCount);
+      rightDeltas = new Float32Array(columnCount);
+    }
 
     skyGradient = ctx.createLinearGradient(0, 0, 0, height);
     skyGradient.addColorStop(0, SKY_TOP);
@@ -324,11 +332,33 @@ export function createRainEngine(
       buildCity(dpr);
       builtCityWidth = width;
       builtCityDpr = dpr;
+      drops.length = 0;
+      splashes.length = 0;
+      rings.length = 0;
+    } else {
+      // Height-only change (a phone's browser chrome collapsing mid-scroll):
+      // the band sprites are bottom-anchored, so drawCityBands slides them to
+      // the new groundY — but the live overlays (hero signs, beacons, mutable
+      // windows, the spire) were baked with absolute scene-space y. They must
+      // slide the same distance or they detach and float in the sky (seen on
+      // a real phone 2026-08-31: an orange sign hovering over the hero
+      // buttons). Splashes ride the water surface, whose rest line moves by
+      // its own delta; rings/drops/waterLights carry no baked y.
+      const bandShift = groundY - prevGroundY;
+      const surfaceShift = waterRest - prevWaterRest;
+      if (bandShift !== 0) {
+        for (const sign of billboards) sign.y += bandShift;
+        for (const beacon of beacons) beacon.y += bandShift;
+        for (const window_ of mutableWindows) window_.y += bandShift;
+        if (spire) {
+          spire.topY += bandShift;
+          spire.tipY += bandShift;
+        }
+      }
+      if (surfaceShift !== 0) {
+        for (const splash of splashes) splash.y += surfaceShift;
+      }
     }
-
-    drops.length = 0;
-    splashes.length = 0;
-    rings.length = 0;
   }
 
   function makeSpriteCanvas(w: number, h: number, dpr: number) {
