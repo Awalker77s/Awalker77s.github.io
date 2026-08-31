@@ -44,6 +44,7 @@ export const projects: Project[] = [
     ],
     stack: ["Electron", "TypeScript", "React", "Chrome MV3", "Windows UIA", "Ollama", "Claude Code"],
     images: [
+      { src: "/projects/drydock-chat.png", alt: "Drydock — the Chat tab: a plain-English request drafted in the composer, with your own Claude connected", width: 2000, height: 703 },
       { src: "/projects/drydock.png", alt: "Drydock — automation run timeline with token and cost receipt", width: 2000, height: 1030 },
       { src: "/projects/drydock-editor.png", alt: "Drydock — an automation's detail sheet: when it runs, which files it reads, what you get, allowed tools, and past runs, with the 'Claude never sees it' privacy badge", width: 2000, height: 1032 },
     ],
@@ -92,7 +93,9 @@ export const projects: Project[] = [
     stack: ["Next.js", "React", "TypeScript", "Three.js", "Tailwind", "Python (CV pipeline)"],
     images: [
       { src: "/projects/fight.png", alt: "FIGHT — Shadow League in-game bout with broadcast HUD", width: 1600, height: 880 },
-      { src: "/projects/fight-film.png", alt: "FIGHT — Film Room: a captured shadow replayed on a 3D fighter under the spotlight, with playback scrubber and speed controls", width: 1600, height: 1000 },
+      { src: "/projects/fight-robot.png", alt: "FIGHT — the ATLAS-R fighter front-on in the Film Room, guard up under the ring spotlight", width: 1600, height: 1000 },
+      { src: "/projects/fight-practice.png", alt: "FIGHT — Practice in the basement: the robot squares up with a ghost partner under one bare bulb, drill presets and the punch deck alongside", width: 1600, height: 1000 },
+      { src: "/projects/fight-loadout.png", alt: "FIGHT — the Loadout hub: five equip slots, the move store, credits, and the fighter glowing with equipped gear", width: 1600, height: 1000 },
       { src: "/projects/fight-menu.png", alt: "FIGHT — mode select: Fight, Loadout, Practice, Watch, Training, and Physics Lab over the empty ring", width: 1600, height: 1000 },
     ],
     note: "Async tournaments are the next milestone.",
@@ -112,7 +115,10 @@ export const projects: Project[] = [
     stack: ["TypeScript", "React", "Vite", "Supabase", "ts-fsrs", "Vercel"],
     images: [
       { src: "/projects/mivora.png", alt: "Mivora home page — gamified AI skill tracks", width: 1600, height: 1000 },
+      { src: "/projects/mivora-track.png", alt: "Mivora — the Building with AI path: lesson 1 mastered with its project piece built, lesson 2 unlocked, later lessons locked behind the mastery checkpoint", width: 1600, height: 1000 },
+      { src: "/projects/mivora-practice.png", alt: "Mivora — a mastery-check question mid-lesson: instant verdict, the worked explanation, and Pando the mascot cheering the streak", width: 1600, height: 1000 },
       { src: "/projects/mivora-lesson.png", alt: "Mivora lesson page — Bit vs. Qubit, lesson 1 of the Quantum Computing track", width: 1600, height: 1000 },
+      { src: "/projects/mivora-progress.png", alt: "Mivora — the progress dashboard: level ring, XP, tokens, Bronze league, streaks, avatars, and unlockable titles", width: 1600, height: 1000 },
     ],
   },
   {
@@ -129,8 +135,8 @@ export const projects: Project[] = [
     ],
     stack: ["Python", "PyMuPDF", "Tesseract", "Sentence-Transformers", "FAISS", "OpenAI", "Gradio"],
     images: [
-      { src: "/projects/rag.png", alt: "Document Intelligence — five-stage RAG pipeline: ingest, chunk, embed, retrieve, generate", width: 1600, height: 1000 },
       { src: "/projects/rag-detail.png", alt: "Document Intelligence — detailed architecture with per-stage internals, fallbacks, and model choices (expand to read)", width: 1600, height: 1000 },
+      { src: "/projects/rag.png", alt: "Document Intelligence — five-stage RAG pipeline: ingest, chunk, embed, retrieve, generate", width: 1600, height: 1000 },
     ],
     repoUrl: "https://github.com/Awalker77s/Document-Intelligence-Pipeline",
   },
@@ -166,6 +172,8 @@ export const projects: Project[] = [
     stack: ["TypeScript", "React", "Supabase", "Edge Functions", "OpenAI", "Stripe"],
     images: [
       { src: "/projects/echinoid.png", alt: "Echinoid ID — fossil identification interface", width: 1600, height: 965 },
+      { src: "/projects/echinoid-identify.png", alt: "Echinoid ID — identifying a specimen: a fossil photo attached as the aboral view, with free identifications remaining", width: 1600, height: 1000 },
+      { src: "/projects/echinoid-collection.png", alt: "Echinoid ID — Bill Thompson's species database: genus, family, formation, and age for each reference specimen, with draft entries", width: 1600, height: 1000 },
       { src: "/projects/echinoid-how.png", alt: "Echinoid ID — how it works: upload photos, add field details, analyze features, compare", width: 1600, height: 1000 },
     ],
   },
