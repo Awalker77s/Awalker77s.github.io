@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Project } from "@/lib/content";
 
 const arrowButton =
@@ -12,7 +12,14 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
   const count = images.length;
   const [index, setIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
-  const current = images[Math.min(index, count - 1)];
+  // Mobile-only: the wordy half of the card starts collapsed to image +
+  // tagline; this never affects md+ where the details are always shown.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const detailsId = `${project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-details`;
+  // The type doesn't forbid an empty images[] — a project without images
+  // renders its text half instead of crashing the card.
+  const current = count > 0 ? images[Math.min(index, count - 1)] : undefined;
 
   const step = useCallback(
     (delta: number) => setIndex((previous) => (previous + delta + count) % count),
@@ -33,6 +40,8 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
       if (event.key === "ArrowLeft") step(-1);
     };
     window.addEventListener("keydown", onKey);
+    // Keyboard users land inside the dialog instead of on the page behind it.
+    closeButtonRef.current?.focus();
     return () => {
       root.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKey);
@@ -45,6 +54,7 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
         flip ? "md:flex-row-reverse" : "md:flex-row"
       }`}
     >
+      {current && (
       <div className="relative md:w-1/2">
         <button
           type="button"
@@ -77,6 +87,7 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
           </>
         )}
       </div>
+      )}
       <div className="md:w-1/2">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-xl font-semibold text-foreground">{project.name}</h3>
@@ -89,6 +100,17 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
           </span>
         </div>
         <p className="mt-1 font-mono text-sm text-accent">{project.tagline}</p>
+        <button
+          type="button"
+          onClick={() => setDetailsOpen((previous) => !previous)}
+          aria-expanded={detailsOpen}
+          aria-controls={detailsId}
+          className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-full border border-edge bg-surface-raised px-4 font-mono text-xs text-muted transition-colors hover:border-accent/40 hover:text-accent md:hidden"
+        >
+          {detailsOpen ? "Hide details" : "Expand project"}
+          <span aria-hidden>{detailsOpen ? "▴" : "▾"}</span>
+        </button>
+        <div id={detailsId} className={`${detailsOpen ? "block" : "hidden"} md:block`}>
         <p className="mt-4 text-sm leading-relaxed text-muted">{project.description}</p>
         <ul className="mt-4 space-y-2 text-sm leading-relaxed text-muted">
           {project.points.map((point) => (
@@ -121,9 +143,10 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
           )}
           {project.note && <span className="text-faint">{project.note}</span>}
         </div>
+        </div>
       </div>
 
-      {expanded && (
+      {expanded && current && (
         <div
           role="dialog"
           aria-modal="true"
@@ -133,6 +156,7 @@ export default function ProjectCard({ project, flip }: { project: Project; flip:
           onWheel={(event) => event.stopPropagation()}
         >
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={() => setExpanded(false)}
             aria-label="Close image viewer"
