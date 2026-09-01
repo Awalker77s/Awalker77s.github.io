@@ -6,7 +6,7 @@ import { createAtmosphereAudio, type AtmosphereAudio } from "@/lib/rain/audio";
 import { initSmoothScroll } from "@/lib/scroll";
 import { blimpSkills } from "@/lib/content";
 
-const MOTION_KEY = "rain-motion";
+const MOTION_KEY = "rain-motion-v2";
 const SOUND_KEY = "rain-sound";
 
 export default function Atmosphere() {
@@ -41,17 +41,16 @@ export default function Atmosphere() {
     );
     engineRef.current = engine;
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const stored = localStorage.getItem(MOTION_KEY);
-    setMotionOn(stored ? stored === "on" : !reducedMotion.matches);
-
-    const followPreference = (event: MediaQueryListEvent) => {
-      if (!localStorage.getItem(MOTION_KEY)) setMotionOn(!event.matches);
-    };
-    reducedMotion.addEventListener("change", followPreference);
+    // Rain starts ON for everyone — it's the site's identity (operator call
+    // 2026-08-31). The OS reduced-motion preference no longer pre-disables it
+    // (that quietly parked some visitors on a frozen frame); the pill is the
+    // opt-out, and only an explicit stored "off" keeps the scene still. The
+    // key is versioned because the old key collected "off" values under the
+    // old scheme — clear it so those can't keep returning visitors rainless.
+    localStorage.removeItem("rain-motion");
+    setMotionOn(localStorage.getItem(MOTION_KEY) !== "off");
 
     return () => {
-      reducedMotion.removeEventListener("change", followPreference);
       engine.destroy();
       engineRef.current = null;
       audioRef.current?.destroy();
