@@ -277,6 +277,6 @@ export const blimpSkills = [
 ];
 
 export const about = [
-  "I'm Alexander. I'm studying Applied AI at UT Knoxville after doing my computer science core at UCF, and most of what I know comes from building my own systems — an automation app that rehearses a task against a copy of your files before it's allowed to touch anything real, a knowledge vault that works as the shared memory my AI agents read before they start on any of my projects, and trust-stack, the set of flight rules that keeps those agents honest across every repo I own.",
+  "I'm Alexander. I'm studying Applied AI at UT Knoxville after doing my computer science core at UCF, and most of what I've built works as one connected system — automation that does real work, the memory my AI agents read before they act, and the rules that keep them honest. Each piece exists because the others needed it.",
   "The thing I care about most is proof. Anyone can make an AI demo look good — I want to show it works: test suites, honest numbers even when they're unflattering, receipts for every action an agent takes. That's the kind of engineer I'm trying to be.",
 ];
