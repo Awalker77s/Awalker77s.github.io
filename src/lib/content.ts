@@ -79,6 +79,26 @@ export const projects: Project[] = [
     ],
   },
   {
+    name: "Cozy",
+    badge: "local-first",
+    tagline: "Her name is Ember. She runs the room.",
+    description:
+      "A Windows desktop command center themed as a rainy hearth, driven by chat or voice — wake it with \"Hey Ember.\" It opens real PowerShell and Claude Code terminals, delegates work to named agents, and briefs me every morning from the same knowledge vault my other agents read. Everything runs on free local models: no cloud, no API keys anywhere.",
+    points: [
+      "Full-talking voice on one local Whisper engine — streaming wake word, patient capture, spoken replies at a fireside pace",
+      "59 risk-tagged capabilities behind confirmation gates; deterministic-first, so common commands never touch a model",
+      "Agent orchestration: baton handoffs, fan-out and gather, stall watchdogs, an approval queue — delegations survive restarts",
+      "Hardened by adversarial review before each ship: 40+ confirmed defects found and fixed, from webview mic permissions to tokens encrypted at rest",
+    ],
+    stack: ["Electron", "TypeScript", "React", "Ollama", "Whisper", "Kokoro TTS", "xterm.js"],
+    images: [
+      { src: "/projects/cozy.webp", alt: "Cozy — the hearth workspace: rain on the window, Mission Control tracking a working agent, a delegated PowerShell terminal, and the Ask Ember bar running a local model", width: 1983, height: 1204 },
+      { src: "/projects/cozy-chat.webp", alt: "Cozy — the chat tab: Ember's morning briefing with open to-dos read from the brain vault, and a delegated agent waiting at the approval gate", width: 1983, height: 1204 },
+      { src: "/projects/cozy-tests.webp", alt: "Cozy — a terminal agent running the real logic-test suite: 36 assertions green, all 20 files passed, Mission Control watching the heartbeat", width: 1983, height: 1204 },
+    ],
+    note: "Private build — ask me for a demo.",
+  },
+  {
     name: "FIGHT — Shadow League",
     badge: "in development",
     tagline: "Your training footage becomes your fighter.",
