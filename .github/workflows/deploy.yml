@@ -27,7 +27,14 @@ jobs:
       # omits Linux-only optional-dep entries (@emnapi/* under tailwind oxide),
       # which makes npm ci's strict sync check fail on the ubuntu runner.
       - run: npm install --no-audit --no-fund
+      # A push to master IS a production deploy, so the gates run first:
+      # lint, then the build (which type-checks), then the static guards
+      # over out/ — banned viewport units, image pairs and their declared
+      # sizes, dead asset links, the page-weight budget. Any failure stops
+      # the job before the artifact upload, and nothing ships.
+      - run: npm run lint
       - run: npm run build
+      - run: npm run check
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out
