@@ -1,3 +1,5 @@
+import { WATERLINE_DEPTH } from "@/lib/depth";
+
 export type RainEngine = {
   start(): void;
   stop(): void;
@@ -278,16 +280,22 @@ export function createRainEngine(
     // The depth canvas is 100lvh — it IS the viewport measurement. The scene
     // canvas is 200lvh of document, sized from the same numbers.
     const rect = depthCanvas.getBoundingClientRect();
-    if (rect.width === width && rect.height === height) return;
+    // Mobile GPUs pay per pixel: cap DPR at 1.5 on small/touch screens —
+    // visually indistinguishable at phone sizes, ~44% fewer pixels than 2.
+    const dpr = Math.min(
+      window.devicePixelRatio || 1,
+      rect.width < 768 || coarsePointer ? 1.5 : MAX_DPR,
+    );
+    // The pixel ratio is part of the size: dragging the window to a monitor
+    // with a different density (or browser zoom) keeps the CSS rect but needs
+    // new backing stores, or the whole scene renders soft/oversampled.
+    if (rect.width === width && rect.height === height && dpr === bakeDpr) return;
     const prevGroundY = groundY;
     const prevWaterRest = waterRest;
     const prevColumnCount = columnCount;
     width = rect.width;
     height = rect.height;
     isMobile = width < 768;
-    // Mobile GPUs pay per pixel: cap DPR at 1.5 on small/touch screens —
-    // visually indistinguishable at phone sizes, ~44% fewer pixels than 2.
-    const dpr = Math.min(window.devicePixelRatio || 1, isMobile || coarsePointer ? 1.5 : MAX_DPR);
     bakeDpr = dpr;
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * 2 * dpr);
@@ -408,7 +416,11 @@ export function createRainEngine(
   // screen's glow is baked here rather than spending runtime shadowBlur.
   function bakeBlimpSprite(skill: string, dir: 1 | -1, accent: string) {
     const scale = isMobile ? 0.75 : 1;
-    const font = `600 ${Math.round(13 * scale)}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+    // The site's own mono face (the CSS variable next/font defines), so the
+    // airship screens match the page's labels; system monos are the fallback
+    // if the webfont has not arrived by the first spawn (~4s after load).
+    const siteMono = getComputedStyle(document.documentElement).getPropertyValue("--font-geist-mono").trim();
+    const font = `600 ${Math.round(13 * scale)}px ${siteMono ? `${siteMono}, ` : ""}ui-monospace, "Cascadia Code", Consolas, monospace`;
     const probe = makeSpriteCanvas(8, 8, 1).ctx;
     probe.font = font;
     const screenW = probe.measureText(skill).width + 26 * scale;
@@ -1210,7 +1222,7 @@ export function createRainEngine(
     submerge = clamp01(scrollYCached / submergeRange);
     depth = clamp01((scrollYCached - submergeRange) / Math.max(scrollRange - submergeRange, 1));
     if (onDepth) {
-      const combined = clamp01(submerge * 0.4 + depth * 0.6);
+      const combined = clamp01(submerge * WATERLINE_DEPTH + depth * (1 - WATERLINE_DEPTH));
       if (lastEmittedDepth < 0 || Math.abs(combined - lastEmittedDepth) > 0.003) {
         lastEmittedDepth = combined;
         onDepth(combined);
@@ -1701,6 +1713,20 @@ export function createRainEngine(
     }, 150);
   }
 
+  // Density changes (window dragged to another monitor) do not reliably fire
+  // `resize`; a resolution media query pinned to the current ratio does. It
+  // re-arms itself because the query only describes the ratio it was built for.
+  let densityQuery: MediaQueryList | null = null;
+  function handleDensityChange() {
+    watchDensity();
+    handleResize();
+  }
+  function watchDensity() {
+    densityQuery?.removeEventListener("change", handleDensityChange);
+    densityQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    densityQuery.addEventListener("change", handleDensityChange);
+  }
+
   function handleVisibilityChange() {
     if (!running) return;
     if (document.hidden) {
@@ -1718,6 +1744,7 @@ export function createRainEngine(
   window.visualViewport?.addEventListener("resize", handleResize);
   window.addEventListener("scroll", handleScroll, { passive: true });
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  watchDensity();
 
   function destroy() {
     stop();
@@ -1727,6 +1754,8 @@ export function createRainEngine(
     window.visualViewport?.removeEventListener("resize", handleResize);
     window.removeEventListener("scroll", handleScroll);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
+    densityQuery?.removeEventListener("change", handleDensityChange);
+    densityQuery = null;
   }
 
   return { start, stop, renderStaticFrame, destroy };

@@ -17,14 +17,43 @@ export type Project = {
 
 export const site = {
   name: "Alexander Walker",
+  url: "https://awalker77s.github.io",
   role: "AI Automation · Multi-Agent Systems · Orchestration",
   headline: "I build AI systems that ship — and prove they work.",
   summary:
     "Applied AI student at UT Knoxville. I care most about the gap between what AI models can do and what actually gets deployed inside a real business — so I build products that close it, and ship them to real users.",
+  // Browser tab, search result, and link-preview copy.
+  metaTitle: "Alexander Walker — AI Automation & Multi-Agent Systems",
+  metaDescription:
+    "Applied AI student at UT Knoxville. I design multi-agent systems, LLM pipelines, and full-stack products — and ship them to real users.",
   email: "awalker200677@gmail.com",
   phone: "228-357-2131",
   github: "https://github.com/Awalker77s",
+  githubLabel: "github.com/Awalker77s",
   linkedin: "https://www.linkedin.com/in/alexander-walker-8b2694243",
+  linkedinLabel: "linkedin.com/in/alexander-walker",
+};
+
+// One entry per page section, in scroll order — the nav, the scrollspy, and
+// the section headings all read this list, so they cannot drift apart.
+export const sections = [
+  { id: "projects", index: "01", title: "Projects" },
+  { id: "experience", index: "02", title: "Experience" },
+  { id: "skills", index: "03", title: "Skills" },
+  { id: "about", index: "04", title: "About" },
+  { id: "contact", index: "05", title: "Contact" },
+] as const;
+
+export type SectionId = (typeof sections)[number]["id"];
+
+export const contact = {
+  headline: "Building something where AI agents should be doing the work? Let's talk.",
+};
+
+export const footer = {
+  tagline: "built in the rain",
+  credits:
+    "Rain: custom canvas engine. Music: synthesized in the Web Audio API. No libraries, no recordings.",
 };
 
 // Ordered by what he's aiming for — AI automation and agent systems lead,

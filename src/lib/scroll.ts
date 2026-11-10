@@ -69,6 +69,13 @@ function attach(): () => void {
 
   function onWheel(event: WheelEvent) {
     if (event.ctrlKey || event.defaultPrevented) return; // pinch-zoom / handled
+    // Sideways intent (trackpad swipe, shift+wheel) is not ours to take:
+    // swallowing it would also cancel horizontal scrolling and history swipes.
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    // A wheel over an open modal, or over anything that opted into scrolling
+    // itself, must never move the page underneath.
+    const target = event.target;
+    if (target instanceof Element && target.closest("dialog[open], [data-native-scroll]")) return;
     const scale =
       event.deltaMode === WheelEvent.DOM_DELTA_LINE
         ? LINE_PX

@@ -1,3 +1,5 @@
+import { WATERLINE_DEPTH } from "@/lib/depth";
+
 export type AtmosphereAudio = {
   enable: () => Promise<void>;
   disable: () => void;
@@ -36,7 +38,7 @@ const FADE_OUT_S = 0.6;
 // both worlds, which is what keeps the crossfade feeling continuous.
 const MUFFLE_SURFACE_HZ = 3000;
 const MUFFLE_DEEP_HZ = 700;
-const SUBMERGE_DEPTH = 0.4;
+const SUBMERGE_DEPTH = WATERLINE_DEPTH;
 const DEPTH_SMOOTH_S = 0.12;
 
 // Rain sits far behind the music: a light bed, not the subject.
