@@ -1,4 +1,12 @@
 import { WATERLINE_DEPTH } from "@/lib/depth";
+import {
+  RAY_TOP_WIDTH_RATIO,
+  addBloom,
+  bakeCausticTile,
+  bakeCloudTile,
+  bakeMistTile,
+  bakeRaySprite,
+} from "@/lib/rain/textures";
 
 export type RainEngine = {
   start(): void;
@@ -38,8 +46,15 @@ const SIM_STEP = 1 / 60;
 const SPLASH_GRAVITY = 1100;
 const MAX_DPR = 2;
 
+// Sky: the page's own navy at the top (the nav and the canvas base coat are
+// the same color, so the scene has no top edge), deepening to an indigo that
+// already carries a little of the city's light where it meets the skyline.
 const SKY_TOP = "#060b14";
-const SKY_BOTTOM = "#0a1322";
+const SKY_MID = "#08101f";
+const SKY_HORIZON = "#0f1933";
+// The first few metres of water mirror that horizon glow before the column
+// takes over — a lit lip under the waterline instead of a flat dark slab.
+const WATER_LIP = "#11233c";
 const WATER_SURFACE = "#0c1a2b";
 const WATER_DEEP_RGB: Rgb = [5, 10, 18];
 const STREAK_COLOR = "168, 196, 224";
@@ -56,6 +71,44 @@ const NEON_AMBER = "255, 157, 61"; // #ff9d3d
 const NEON_VIOLET = "180, 107, 255"; // #b46bff
 const NEON_CORE = "216, 250, 255"; // #d8faff — hottest inner glow
 const HAZE_VIOLET = "47, 27, 77"; // #2f1b4d — atmospheric bands between layers
+const HAZE_LIT = "62, 54, 116"; // the same haze where the city's own light is in it
+const STREAK_HEAD = "214, 232, 250"; // a raindrop's leading end
+
+// Clouds and mist drift on baked tiles (textures.ts). Speeds are px/s —
+// weather-slow: the eye should register that the sky is alive, never watch it.
+const CLOUD_LAYERS = [
+  { tileScale: 1, drift: 5.5, alpha: 0.4 },
+  { tileScale: 1.75, drift: -2.4, alpha: 0.3 },
+];
+const MIST_LAYERS = [
+  { behind: "mid", heightFrac: 0.2, drift: -3.2, alpha: 0.24 },
+  { behind: "near", heightFrac: 0.12, drift: 4.6, alpha: 0.2 },
+] as const;
+
+// Sky gradient + clouds + city glow move by a fraction of a pixel per frame,
+// and all of it is soft. So it is composited into a half-resolution cache a
+// few times a second and reaches the scene as ONE blit — fewer full-screen
+// passes per frame than the flat sky it replaces.
+const SKY_CACHE_SCALE = 0.5;
+const SKY_REFRESH_FRAMES = 6;
+// Only the rows near the viewport are repainted (the scene canvas is two
+// viewports tall and scrolls with the page). Rows outside keep their last
+// frame — the same static city, at most a few frames stale when a fast flick
+// brings them back before the next paint.
+const PAINT_MARGIN = 0.3;
+
+// The skyline's mirror image is drawn in horizontal slices, each nudged
+// sideways on its own phase: that slip between slices is what the eye reads
+// as ripples. LIFT starts the mirror a little above the rest line so wave
+// crests are covered too (the clip trims it to the actual surface).
+const REFLECTION_ALPHA = 0.62;
+const REFLECTION_STRETCH = 1.4;
+const REFLECTION_LIFT = 14;
+// Underwater light: the baked shaft is soft-edged, so it needs more gain than
+// the old hard wedge to read the same; caustics stay well under the 0.10
+// additive ceiling the legibility research set for light behind text.
+const RAY_GAIN = 1.9;
+const CAUSTIC_ALPHA = 0.07;
 
 // The city stands on a shore strip above the waterline — a dark embankment
 // mass separating the neon from the sea, so the skyline never reads as
@@ -124,6 +177,11 @@ const GOD_RAYS = [
 
 function clamp01(value: number) {
   return Math.min(1, Math.max(0, value));
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  const t = clamp01((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
 }
 
 function mulberry32(seed: number) {
@@ -202,14 +260,32 @@ export function createRainEngine(
   // sky from cutting hard from skyline to flat black.
   let cityGlowViolet: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
   let cityGlowCyan: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
-  let fogSprite: HTMLCanvasElement | null = null;
+  // Spray hanging over the quay where the rain meets the water.
+  let quayMist: CanvasGradient = ctx.createLinearGradient(0, 0, 0, 1);
+  let skyCache: HTMLCanvasElement | null = null;
+  let skyCacheCtx: CanvasRenderingContext2D | null = null;
+  let skyCacheStale = true;
+  // Set whenever the canvas was wiped (resize) or the whole scene must change
+  // character at once (rain switched off): the next paint covers the entire
+  // live region instead of only the rows near the viewport.
+  let paintEverything = true;
+  let cloudTile: HTMLCanvasElement | null = null;
+  let mistTile: HTMLCanvasElement | null = null;
+  let raySprite: HTMLCanvasElement | null = null;
+  let causticTile: HTMLCanvasElement | null = null;
 
   const drops: Drop[] = [];
   const splashes: Splash[] = [];
   const rings: Ring[] = [];
   const spawnDebt = [0, 0, 0];
 
-  const citySeed = Math.floor(Math.random() * 0xffffffff);
+  // Every visit gets a new city; `?seed=<number>` pins one, so a screenshot
+  // (the link-preview card, a bug report) can be reproduced exactly.
+  const seedParam = new URLSearchParams(window.location.search).get("seed");
+  const citySeed =
+    seedParam !== null && /^\d{1,10}$/.test(seedParam)
+      ? Number(seedParam) >>> 0
+      : Math.floor(Math.random() * 0xffffffff);
   let cityFar: CityBand | null = null;
   let cityMid: CityBand | null = null;
   let cityNear: CityBand | null = null;
@@ -226,6 +302,8 @@ export function createRainEngine(
   const waterLights: { x: number; rgb: string; strength: number; phase: number }[] = [];
   const cars: Car[] = [];
   const flakes: Flake[] = [];
+  // A few large, faint, out-of-focus motes close to the lens: depth of field.
+  const motes: Flake[] = [];
   const bubbles: Bubble[] = [];
   const abyssGlints: AbyssGlint[] = [];
 
@@ -235,7 +313,6 @@ export function createRainEngine(
   let resizeTimer = 0;
   let lastTime = 0;
   let accumulator = 0;
-  let fogPhase = 0;
   let sceneTime = 0;
   let frameTick = 0;
   let windowToggleIn = 3;
@@ -324,7 +401,12 @@ export function createRainEngine(
 
     skyGradient = ctx.createLinearGradient(0, 0, 0, height);
     skyGradient.addColorStop(0, SKY_TOP);
-    skyGradient.addColorStop(1, SKY_BOTTOM);
+    skyGradient.addColorStop(0.5, SKY_MID);
+    skyGradient.addColorStop(groundY / height, SKY_HORIZON);
+    skyGradient.addColorStop(1, SKY_HORIZON);
+    quayMist = ctx.createLinearGradient(0, waterRest - 22, 0, waterRest + 4);
+    quayMist.addColorStop(0, `rgba(${STREAK_COLOR}, 0)`);
+    quayMist.addColorStop(1, `rgba(${STREAK_COLOR}, 0.1)`);
     cityGlowViolet = ctx.createRadialGradient(width * 0.68, groundY + 10, 0, width * 0.68, groundY + 10, height * 0.55);
     cityGlowViolet.addColorStop(0, `rgba(${HAZE_VIOLET}, 0.34)`);
     cityGlowViolet.addColorStop(0.55, `rgba(${HAZE_VIOLET}, 0.12)`);
@@ -343,22 +425,24 @@ export function createRainEngine(
     // while submerged is the depth canvas's job now, so this never rebuilds
     // per scroll.
     waterGradient = ctx.createLinearGradient(0, waterRest - 20, 0, height * 2 + 20);
-    waterGradient.addColorStop(0, WATER_SURFACE);
+    waterGradient.addColorStop(0, WATER_LIP);
+    waterGradient.addColorStop(Math.min(0.2, 70 / (height * 1.14 + 40)), WATER_SURFACE);
     waterGradient.addColorStop(1, rgbString(mixRgb(WATER_DEEP_RGB, rampRgb(0.2), 1)));
     abyssGradientDepth = -1;
 
-    const fogRadius = Math.max(200, Math.round(width * 0.3));
-    fogSprite = document.createElement("canvas");
-    fogSprite.width = fogRadius * 2;
-    fogSprite.height = fogRadius * 2;
-    const fogCtx = fogSprite.getContext("2d");
-    if (fogCtx) {
-      const gradient = fogCtx.createRadialGradient(fogRadius, fogRadius, 0, fogRadius, fogRadius, fogRadius);
-      gradient.addColorStop(0, "rgba(120, 150, 190, 0.05)");
-      gradient.addColorStop(1, "rgba(120, 150, 190, 0)");
-      fogCtx.fillStyle = gradient;
-      fogCtx.fillRect(0, 0, fogRadius * 2, fogRadius * 2);
-    }
+    skyCache ??= document.createElement("canvas");
+    skyCache.width = Math.max(1, Math.ceil(width * SKY_CACHE_SCALE));
+    skyCache.height = Math.max(1, Math.ceil(groundY * SKY_CACHE_SCALE));
+    skyCacheCtx = skyCache.getContext("2d");
+    skyCacheStale = true;
+    paintEverything = true;
+
+    // Size-independent textures: baked once per engine, from the city's seed
+    // so a pinned seed reproduces the weather too.
+    cloudTile ??= bakeCloudTile(mulberry32(citySeed ^ 0x51ed270b));
+    mistTile ??= bakeMistTile(mulberry32(citySeed ^ 0x2f6b9d13));
+    raySprite ??= bakeRaySprite();
+    causticTile ??= bakeCausticTile();
 
     // iOS Safari's toolbar collapse fires height-only resizes constantly
     // while scrolling; rebaking the whole city for those wastes real CPU on
@@ -646,6 +730,16 @@ export function createRainEngine(
       far.ctx.closePath();
       far.ctx.fill();
     }
+    // Aerial perspective: the far band stands in the haze the city's own light
+    // makes, so its bases dissolve toward violet while the tops stay pure
+    // silhouette. source-atop keeps the tint inside the buildings.
+    far.ctx.globalCompositeOperation = "source-atop";
+    const farHaze = far.ctx.createLinearGradient(0, far.height * 0.2, 0, far.height);
+    farHaze.addColorStop(0, `rgba(${HAZE_LIT}, 0)`);
+    farHaze.addColorStop(1, `rgba(${HAZE_LIT}, 0.42)`);
+    far.ctx.fillStyle = farHaze;
+    far.ctx.fillRect(0, 0, width, far.height);
+    far.ctx.globalCompositeOperation = "source-over";
     const pinpricks = 3 + Math.floor(rand() * 3);
     far.ctx.fillStyle = `rgba(${STREAK_COLOR}, 0.3)`;
     for (let i = 0; i < pinpricks; i++) {
@@ -656,6 +750,10 @@ export function createRainEngine(
 
     const midSpec = CITY_BANDS[1];
     const mid = makeBandCanvas(height * midSpec.heightFrac, dpr);
+    // Every light source in a band (windows, signs, beacon tips) is drawn on
+    // a separate layer first. That layer is then laid over the masonry AND
+    // blurred back on top of it as bloom — halos in the wet air, baked once.
+    const midLights = makeBandCanvas(mid.height, dpr);
     const midTopWorld = groundY - mid.height;
     const midBuildings = walkBuildings(rand, mid.height, midSpec, clusterX);
     mid.ctx.fillStyle = midSpec.fill;
@@ -684,7 +782,7 @@ export function createRainEngine(
         mid.ctx.lineTo(rect.x + rect.w, rect.y + 0.5);
         mid.ctx.stroke();
       }
-      bakeWindows(mid.ctx, rand, rects, MID_CELL_W, MID_CELL_H, mid.height, midTopWorld, false);
+      bakeWindows(midLights.ctx, rand, rects, MID_CELL_W, MID_CELL_H, mid.height, midTopWorld, false);
       mid.ctx.fillStyle = midSpec.fill;
     }
     // Holo-billboards: saturated color blocks with baked glow — at this scale a
@@ -698,14 +796,14 @@ export function createRainEngine(
       const bx = b.x + 2 + rand() * Math.max(1, b.w - bw - 4);
       const by = mid.height - b.h + 4 + rand() * (b.h * 0.5);
       const rgb = BILLBOARD_COLORS[Math.floor(rand() * BILLBOARD_COLORS.length)];
-      mid.ctx.save();
-      mid.ctx.shadowColor = `rgba(${rgb}, 0.9)`;
-      mid.ctx.shadowBlur = 14;
-      mid.ctx.fillStyle = `rgba(${rgb}, 0.85)`;
-      mid.ctx.fillRect(bx, by, bw, bh);
-      mid.ctx.restore();
-      mid.ctx.fillStyle = `rgba(${NEON_CORE}, 0.5)`;
-      mid.ctx.fillRect(bx + 1, by + 1, bw - 2, 1);
+      midLights.ctx.save();
+      midLights.ctx.shadowColor = `rgba(${rgb}, 0.9)`;
+      midLights.ctx.shadowBlur = 14;
+      midLights.ctx.fillStyle = `rgba(${rgb}, 0.85)`;
+      midLights.ctx.fillRect(bx, by, bw, bh);
+      midLights.ctx.restore();
+      midLights.ctx.fillStyle = `rgba(${NEON_CORE}, 0.5)`;
+      midLights.ctx.fillRect(bx + 1, by + 1, bw - 2, 1);
       waterLights.push({ x: bx + bw / 2, rgb, strength: 0.5, phase: rand() * Math.PI * 2 });
     }
     const byHeight = [...midBuildings].sort((a, b) => b.h - a.h);
@@ -716,12 +814,12 @@ export function createRainEngine(
       const len = 6 + rand() * 8;
       const cx = b.x + b.w / 2;
       mid.ctx.fillRect(cx - 0.5, mid.height - b.h - len, 1, len);
-      mid.ctx.save();
-      mid.ctx.shadowColor = `rgba(${NEON_CYAN}, 0.8)`;
-      mid.ctx.shadowBlur = 8;
-      mid.ctx.fillStyle = `rgba(${NEON_CYAN}, 0.7)`;
-      mid.ctx.fillRect(cx - 1, mid.height - b.h - len - 1, 2, 2);
-      mid.ctx.restore();
+      midLights.ctx.save();
+      midLights.ctx.shadowColor = `rgba(${NEON_CYAN}, 0.8)`;
+      midLights.ctx.shadowBlur = 8;
+      midLights.ctx.fillStyle = `rgba(${NEON_CYAN}, 0.7)`;
+      midLights.ctx.fillRect(cx - 1, mid.height - b.h - len - 1, 2, 2);
+      midLights.ctx.restore();
       const farEnough = beacons.every((beacon) => Math.abs(beacon.x - cx) > width * 0.12);
       if (beacons.length < beaconTarget && farEnough) {
         beacons.push({ x: cx, y: groundY - b.h - len, period: 3 + rand() * 2, phase: rand() * Math.PI * 2 });
@@ -748,12 +846,23 @@ export function createRainEngine(
       mid.ctx.lineTo(a.x + a.w + gap + 1, deckY + 0.5);
       mid.ctx.stroke();
       const dots = 2 + Math.floor(rand() * 2);
-      mid.ctx.fillStyle = `rgba(${NEON_AMBER}, 0.5)`;
+      midLights.ctx.fillStyle = `rgba(${NEON_AMBER}, 0.5)`;
       for (let d = 0; d < dots; d++) {
-        mid.ctx.fillRect(a.x + a.w + (gap * (d + 1)) / (dots + 1), deckY - 1.4, 1.2, 1.2);
+        midLights.ctx.fillRect(a.x + a.w + (gap * (d + 1)) / (dots + 1), deckY - 1.4, 1.2, 1.2);
       }
       break;
     }
+    // The mid band sits in thinner haze than the far one: only its street
+    // level lifts toward the glow.
+    mid.ctx.globalCompositeOperation = "source-atop";
+    const midHaze = mid.ctx.createLinearGradient(0, mid.height * 0.45, 0, mid.height);
+    midHaze.addColorStop(0, `rgba(${HAZE_LIT}, 0)`);
+    midHaze.addColorStop(1, `rgba(${HAZE_LIT}, 0.2)`);
+    mid.ctx.fillStyle = midHaze;
+    mid.ctx.fillRect(0, 0, width, mid.height);
+    mid.ctx.globalCompositeOperation = "source-over";
+    mid.ctx.drawImage(midLights.canvas, 0, 0, width, mid.height);
+    addBloom(mid.ctx, midLights.canvas, width, mid.height, 0.85);
     cityMid = { canvas: mid.canvas, height: mid.height };
 
     const nearSpec = CITY_BANDS[2];
@@ -763,6 +872,7 @@ export function createRainEngine(
     const nearZone = height * nearSpec.heightFrac;
     const heroRise = height * 0.26;
     const near = makeBandCanvas(nearZone + heroRise, dpr);
+    const nearLights = makeBandCanvas(near.height, dpr);
     const nearTopWorld = groundY - near.height;
     const nearBuildings = walkBuildings(rand, nearZone, nearSpec, null);
     near.ctx.fillStyle = nearSpec.fill;
@@ -784,7 +894,7 @@ export function createRainEngine(
       near.ctx.lineTo(b.x + b.w, near.height - b.h + 0.5);
       near.ctx.stroke();
       bakeWindows(
-        near.ctx,
+        nearLights.ctx,
         rand,
         [{ x: b.x, y: near.height - b.h, w: b.w, h: b.h }],
         NEAR_CELL_W,
@@ -834,7 +944,7 @@ export function createRainEngine(
         near.ctx.stroke();
       }
       // Sparse lit floors on the lower tiers, same run grammar as the band.
-      bakeWindows(near.ctx, rand, tierRects.slice(0, 2), NEAR_CELL_W, NEAR_CELL_H, near.height, nearTopWorld, false);
+      bakeWindows(nearLights.ctx, rand, tierRects.slice(0, 2), NEAR_CELL_W, NEAR_CELL_H, near.height, nearTopWorld, false);
       near.ctx.fillStyle = nearSpec.fill;
       // Crown light joins the beacon system — pulse and water streak for free.
       beacons.push({ x: Math.round(cx) + 0.5, y: groundY - mast.h - heroRise - 2, period: 4.2, phase: rand() * Math.PI * 2 });
@@ -847,6 +957,8 @@ export function createRainEngine(
     wash.addColorStop(1, `rgba(${NEON_CYAN}, 0.08)`);
     near.ctx.fillStyle = wash;
     near.ctx.fillRect(0, near.height - nearZone * 0.15, width, nearZone * 0.15);
+    near.ctx.drawImage(nearLights.canvas, 0, 0, width, near.height);
+    addBloom(near.ctx, nearLights.canvas, width, near.height, 1);
     cityNear = { canvas: near.canvas, height: near.height };
 
     // Hero billboards live outside the bake: they flicker at runtime (the one
@@ -933,8 +1045,8 @@ export function createRainEngine(
     reflect.ctx.drawImage(near.canvas, 0, 0, width * dpr, near.height * dpr, 0, reflectSrcH - near.height, width, near.height);
     reflect.ctx.restore();
     const fade = reflect.ctx.createLinearGradient(0, 0, 0, reflectSrcH);
-    fade.addColorStop(0, "rgba(0, 0, 0, 0.5)");
-    fade.addColorStop(0.55, "rgba(0, 0, 0, 0.16)");
+    fade.addColorStop(0, "rgba(0, 0, 0, 1)");
+    fade.addColorStop(0.5, "rgba(0, 0, 0, 0.42)");
     fade.addColorStop(1, "rgba(0, 0, 0, 0)");
     reflect.ctx.globalCompositeOperation = "destination-in";
     reflect.ctx.fillStyle = fade;
@@ -977,6 +1089,20 @@ export function createRainEngine(
       });
     }
 
+    motes.length = 0;
+    const moteCount = isMobile ? 4 : 8;
+    for (let i = 0; i < moteCount; i++) {
+      motes.push({
+        x0: rand() * width,
+        y: rand() * height,
+        r: 4 + rand() * 6,
+        vy: 11 + rand() * 7,
+        phase: rand() * Math.PI * 2,
+        drift: 8 + rand() * 8,
+        front: true,
+      });
+    }
+
     abyssGlints.length = 0;
     for (let i = 0; i < 6; i++) {
       abyssGlints.push({
@@ -1013,6 +1139,10 @@ export function createRainEngine(
   }
 
   function spawnDrops(dt: number) {
+    // Wind comes in slow gusts: each drop keeps the slant it was born with,
+    // so the rain's angle wanders a few degrees instead of falling as a
+    // ruled grid of identical lines.
+    const gust = 1 + 0.32 * Math.sin(sceneTime * 0.19) + 0.13 * Math.sin(sceneTime * 0.47 + 1.1);
     for (let layer = 0; layer < LAYERS.length; layer++) {
       const spec = LAYERS[layer];
       spawnDebt[layer] += spec.spawnPerSecondPer1000px * (width / 1000) * dt;
@@ -1021,7 +1151,7 @@ export function createRainEngine(
         drops.push({
           x: Math.random() * (width + 200) - 100,
           y: -40 - Math.random() * height * 0.3,
-          vx: spec.drift * (0.8 + Math.random() * 0.4),
+          vx: spec.drift * gust * (0.8 + Math.random() * 0.4),
           vy: spec.speed * (0.85 + Math.random() * 0.3),
           layer,
         });
@@ -1186,6 +1316,13 @@ export function createRainEngine(
           flake.x0 = Math.random() * width;
         }
       }
+      for (const mote of motes) {
+        mote.y += mote.vy * sinkScale * SIM_STEP;
+        if (mote.y > height + 12) {
+          mote.y = -12;
+          mote.x0 = Math.random() * width;
+        }
+      }
     }
 
     const surfaceScreenY = waterRest - scrollYCached;
@@ -1230,21 +1367,76 @@ export function createRainEngine(
     }
   }
 
-  function renderFog() {
-    if (!fogSprite) return;
-    const size = fogSprite.width;
-    const driftX = Math.sin(fogPhase * 0.05) * width * 0.1;
-    const driftX2 = Math.cos(fogPhase * 0.037) * width * 0.12;
-    ctx.drawImage(fogSprite, width * 0.15 + driftX - size / 2, height * 0.35 - size / 2);
-    ctx.drawImage(fogSprite, width * 0.7 + driftX2 - size / 2, height * 0.6 - size / 2);
+  // Draws a horizontally seamless tile across the full width, slid by
+  // `offset` px (any sign, any size — it wraps).
+  function drawTiled(
+    target: CanvasRenderingContext2D,
+    tile: HTMLCanvasElement,
+    tileWidth: number,
+    y: number,
+    tileHeight: number,
+    offset: number,
+  ) {
+    let x = -(((offset % tileWidth) + tileWidth) % tileWidth);
+    for (; x < width; x += tileWidth) target.drawImage(tile, x, y, tileWidth, tileHeight);
+  }
+
+  // The overcast: two cloud layers at different scales sliding in opposite
+  // directions, so the deck slowly re-forms instead of merely scrolling by.
+  // Composited with the sky gradient and the city's glow into the sky cache.
+  function refreshSkyCache() {
+    const sky = skyCacheCtx;
+    if (!sky || !skyCache) return;
+    sky.setTransform(SKY_CACHE_SCALE, 0, 0, SKY_CACHE_SCALE, 0, 0);
+    sky.globalAlpha = 1;
+    sky.fillStyle = skyGradient;
+    sky.fillRect(0, 0, width, groundY);
+    if (cloudTile) {
+      for (let i = 0; i < CLOUD_LAYERS.length; i++) {
+        const layer = CLOUD_LAYERS[i];
+        const tileWidth = Math.max(1100, width * 0.95) * layer.tileScale;
+        sky.globalAlpha = layer.alpha;
+        drawTiled(sky, cloudTile, tileWidth, 0, groundY, sceneTime * layer.drift + i * tileWidth * 0.43);
+      }
+      sky.globalAlpha = 1;
+    }
+    sky.fillStyle = cityGlowViolet;
+    sky.fillRect(0, 0, width, groundY);
+    sky.fillStyle = cityGlowCyan;
+    sky.fillRect(0, 0, width, groundY);
+    skyCacheStale = false;
+  }
+
+  function renderSky(staticMode: boolean) {
+    if (skyCacheStale || staticMode || frameTick % SKY_REFRESH_FRAMES === 0) refreshSkyCache();
+    if (skyCache) ctx.drawImage(skyCache, 0, 0, width, groundY);
+    // Below the ground line the shore and the water cover everything except
+    // the sliver a wave trough opens above the surface: one flat fill.
+    ctx.fillStyle = SKY_HORIZON;
+    ctx.fillRect(0, groundY, width, height - groundY);
+  }
+
+  // Ground mist between two parallax bands; each layer drifts its own way.
+  function renderMist(behind: "mid" | "near") {
+    if (!mistTile) return;
+    // Phones draw only the nearer layer: the far one is mostly behind the
+    // hero copy there, and every blended layer is fill-rate on a small GPU.
+    if (isMobile && behind === "mid") return;
+    for (const layer of MIST_LAYERS) {
+      if (layer.behind !== behind) continue;
+      const mistHeight = height * layer.heightFrac;
+      ctx.globalAlpha = layer.alpha;
+      drawTiled(ctx, mistTile, Math.max(760, width * 0.7), groundY - mistHeight, mistHeight, sceneTime * layer.drift);
+    }
+    ctx.globalAlpha = 1;
   }
 
   function renderDrops() {
     ctx.lineCap = "round";
     for (let layer = 0; layer < LAYERS.length; layer++) {
       const spec = LAYERS[layer];
-      ctx.strokeStyle = `rgba(${STREAK_COLOR}, ${spec.alpha})`;
       ctx.lineWidth = spec.width;
+      ctx.strokeStyle = `rgba(${STREAK_COLOR}, ${spec.alpha})`;
       ctx.beginPath();
       for (const drop of drops) {
         if (drop.layer !== layer) continue;
@@ -1253,19 +1445,28 @@ export function createRainEngine(
         ctx.lineTo(drop.x - drop.vx * trailScale, drop.y - spec.length);
       }
       ctx.stroke();
+      // The leading quarter again, brighter: a drop is a falling point with
+      // motion blur behind it, not a uniform dash.
+      ctx.strokeStyle = `rgba(${STREAK_HEAD}, ${Math.min(1, spec.alpha * 1.45)})`;
+      ctx.beginPath();
+      for (const drop of drops) {
+        if (drop.layer !== layer) continue;
+        const headScale = (spec.length * 0.26) / drop.vy;
+        ctx.moveTo(drop.x, drop.y);
+        ctx.lineTo(drop.x - drop.vx * headScale, drop.y - spec.length * 0.26);
+      }
+      ctx.stroke();
     }
   }
 
   function drawCityBands() {
     if (!cityFar || !cityMid || !cityNear || !shoreBand) return;
-    ctx.fillStyle = cityGlowViolet;
-    ctx.fillRect(0, 0, width, groundY);
-    ctx.fillStyle = cityGlowCyan;
-    ctx.fillRect(0, 0, width, groundY);
     ctx.drawImage(cityFar.canvas, 0, Math.floor(groundY - cityFar.height), width, cityFar.height);
+    renderMist("mid");
     ctx.drawImage(cityMid.canvas, 0, Math.floor(groundY - cityMid.height), width, cityMid.height);
     ctx.fillStyle = hazeGradient;
     ctx.fillRect(0, groundY - cityFar.height, width, cityFar.height);
+    renderMist("near");
     ctx.drawImage(cityNear.canvas, 0, Math.floor(groundY - cityNear.height), width, cityNear.height);
     ctx.drawImage(shoreBand.canvas, 0, Math.floor(groundY), width, shoreBand.height);
   }
@@ -1336,10 +1537,109 @@ export function createRainEngine(
     }
   }
 
+  // The skyline mirrored in the water: horizontal slices of the baked, flipped
+  // sprite, stretched (ripples elongate reflections), each slipped sideways on
+  // its own phase and flickering a little. The caller has clipped to the
+  // water, so the wavy surface trims the top edge.
+  function renderReflection(fade: number) {
+    if (!reflectionSprite) return;
+    const scale = reflectionSprite.width / width;
+    const sourceHeight = reflectionSprite.height / scale;
+    const span = sourceHeight * REFLECTION_STRETCH;
+    // Slices are whole device pixels tall and start on one: a fractional
+    // edge would antialias into a hairline between every pair of slices.
+    const slice = Math.max(1, Math.round((isMobile ? 4 : 3) * bakeDpr)) / bakeDpr;
+    const top = Math.round((waterRest - REFLECTION_LIFT) * bakeDpr) / bakeDpr;
+    const reach = isMobile ? 3.5 : 6.5;
+    // Only the slices actually on screen.
+    const first = Math.max(0, Math.floor((scrollYCached - top) / slice));
+    const end = Math.min(top + span - slice, liveBottom, scrollYCached + height);
+    for (let y = top + first * slice; y < end; y += slice) {
+      const t = (y - top) / span;
+      const amplitude = 0.5 + t * reach;
+      const slip =
+        Math.sin(y * 0.21 - sceneTime * 2.1) * amplitude + Math.sin(y * 0.083 + sceneTime * 0.9) * amplitude * 0.55;
+      ctx.globalAlpha = REFLECTION_ALPHA * fade * (0.74 + 0.26 * Math.sin(y * 0.6 + sceneTime * 2.7));
+      ctx.drawImage(
+        reflectionSprite,
+        0,
+        ((y - top) / REFLECTION_STRETCH) * scale,
+        reflectionSprite.width,
+        (slice / REFLECTION_STRETCH) * scale,
+        slip - 8,
+        y,
+        width + 16,
+        slice,
+      );
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Faint dashed crest lines below the surface, each on its own slower swell:
+  // the body of the water reads as layered waves receding, not a flat fill.
+  function renderSwellLines(fade: number) {
+    const lineCount = isMobile ? 2 : 4;
+    ctx.lineWidth = 1;
+    ctx.lineCap = "round";
+    for (let k = 0; k < lineCount; k++) {
+      const offset = 16 + k * 20 + k * k * 6;
+      ctx.setLineDash([9 + k * 5, 58 + k * 41]);
+      ctx.lineDashOffset = k * 57 - sceneTime * (14 - k * 2.5);
+      ctx.strokeStyle = `rgba(${STREAK_COLOR}, ${(0.1 - k * 0.016) * fade})`;
+      ctx.beginPath();
+      for (let i = 0; i < columnCount; i += 2) {
+        const x = i * COLUMN_SPACING;
+        const y =
+          waterRest + offset + heights[i] * (0.5 - k * 0.1) + swellAt(x + k * 173, 0.8 - k * 0.12, 0.75 + k * 0.2);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  // One light's reflection: a soft core directly under the source plus a
+  // column of short horizontal dashes — each wavelet facet that happens to
+  // face the viewer — widening, wandering and thinning with distance. Drawn
+  // additively, so neighbouring colours bloom where their paths cross.
+  function drawGlitter(x: number, rgb: string, strength: number, phase: number, fade: number) {
+    if (strength < 0.03 || x < 2 || x > width - 2) return;
+    const top = surfaceYs[columnAt(x)] + 1;
+    const rows = Math.round((isMobile ? 8 : 12) + strength * (isMobile ? 9 : 15));
+    const step = isMobile ? 4.5 : 4;
+    const reach = rows * step;
+    const sway = Math.sin(sceneTime * 1.7 + phase);
+    const core = ctx.createLinearGradient(0, top, 0, top + reach * 0.7);
+    core.addColorStop(0, `rgba(${rgb}, ${strength * fade * (0.16 + 0.06 * sway)})`);
+    core.addColorStop(1, `rgba(${rgb}, 0)`);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = core;
+    const coreWidth = 2 + strength * 2;
+    ctx.fillRect(x - coreWidth / 2 + sway, top, coreWidth, reach * 0.7);
+    ctx.fillStyle = `rgb(${rgb})`;
+    const baseWidth = 2.4 + strength * 3.4;
+    for (let row = 0; row < rows; row++) {
+      const t = row / rows;
+      const glint = 0.5 + 0.5 * Math.sin(sceneTime * 3.1 + phase * 2.3 + row * 2.6);
+      const alpha = strength * fade * Math.pow(1 - t, 1.5) * glint * 0.6;
+      if (alpha < 0.012) continue;
+      const dashWidth = baseWidth * (1 + 2.6 * t) * (0.75 + 0.25 * Math.sin(sceneTime * 2.3 + phase + row * 1.9));
+      const wander = Math.sin(sceneTime * 1.5 + phase * 1.3 + row * 0.83) * (0.8 + 5.5 * t);
+      ctx.globalAlpha = alpha;
+      ctx.fillRect(x - dashWidth / 2 + wander, top + row * step, dashWidth, 1.7);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function renderWater() {
     // Per-frame water fill stops at liveBottom; the same fixed gradient
     // painted the static column below it (resize), so the seam is invisible.
     const floor = liveBottom;
+
+    // Spray over the quay: softens the hard line where embankment meets sea.
+    ctx.fillStyle = quayMist;
+    ctx.fillRect(0, waterRest - 22, width, 26);
 
     // Back swell layer: slower, smaller, a touch higher — parallax makes the
     // main surface read as the near edge of a body of water, not a line.
@@ -1374,55 +1674,28 @@ export function createRainEngine(
     ctx.fillStyle = waterGradient;
     ctx.fill();
 
-    // Neon skyline reflection: narrow columns of the baked flipped sprite,
-    // each riding its own column's surface so the image shimmers with the
-    // waves. Skipped once mostly submerged — the surface has left the frame.
-    if (reflectionSprite && !isMobile && submerge < 0.6) {
-      const colW = 7;
-      const scale = reflectionSprite.width / width;
-      const srcH = reflectionSprite.height / scale;
+    // Everything from here to the restore is light lying ON the water, so it
+    // is clipped to the water — the very path that was just filled. All of it
+    // holds at full strength through the first third of the dive (a small
+    // scroll must not dim the hero view), then hands over to the underwater
+    // light — gone by submerge 0.72, as the shafts arrive. Runs on phones
+    // too: sliced this way the mirror is ~25 draws, cheaper than the
+    // per-column blit it replaces.
+    const fade = 1 - smoothstep(0.3, 0.72, submerge);
+    if (fade > 0.01) {
       ctx.save();
-      ctx.globalAlpha = 0.35 * (1 - submerge / 0.6);
-      for (let x = 0; x < width; x += colW) {
-        const i = columnAt(x + colW * 0.5);
-        const top = surfaceYs[i] + (heights[i] + swellAt(x, 1, 0.4)) * 0.6;
-        ctx.drawImage(reflectionSprite, x * scale, 0, colW * scale, reflectionSprite.height, x, top, colW, srcH);
-      }
-      ctx.restore();
-    }
-
-    // Neon bleed: every bright source lays a shimmering colored streak on the
-    // water — the reflection of the LIGHTS, where the sprite above mirrors the
-    // architecture. Additive blend so overlapping colors bloom; each streak
-    // rides its column's surface and sways/breathes on its own phase. Runs on
-    // mobile too (cheap), where it is the only reflection layer.
-    if (submerge < 0.6) {
-      const fade = 1 - submerge / 0.6;
-      ctx.save();
+      ctx.clip();
+      renderReflection(fade);
+      renderSwellLines(fade);
       ctx.globalCompositeOperation = "lighter";
-      const drawStreak = (x: number, rgb: string, strength: number, phase: number) => {
-        if (strength < 0.03 || x < 2 || x > width - 2) return;
-        const i = columnAt(x);
-        const displacement = surfaceYs[i] - waterRest;
-        const sway = Math.sin(sceneTime * 1.7 + phase);
-        const top = surfaceYs[i] + 1.5;
-        const len =
-          (22 + strength * 60) * (1 + 0.25 * Math.sin(sceneTime * 0.9 + phase * 1.7)) +
-          Math.abs(displacement) * 0.8;
-        const alpha = strength * fade * (0.26 + 0.14 * (0.5 + 0.5 * sway));
-        const streak = ctx.createLinearGradient(0, top, 0, top + len);
-        streak.addColorStop(0, `rgba(${rgb}, ${alpha})`);
-        streak.addColorStop(1, `rgba(${rgb}, 0)`);
-        ctx.fillStyle = streak;
-        const streakW = 2 + strength * 2.4;
-        ctx.fillRect(x - streakW / 2 + sway * 1.2, top, streakW, len);
-      };
-      for (const light of waterLights) drawStreak(light.x, light.rgb, light.strength, light.phase);
-      for (const sign of billboards) drawStreak(sign.x + sign.w / 2, sign.rgb, 0.9 * sign.on, sign.x * 0.1);
+      for (const light of waterLights) drawGlitter(light.x, light.rgb, light.strength, light.phase, fade);
+      for (const sign of billboards) drawGlitter(sign.x + sign.w / 2, sign.rgb, 0.95 * sign.on, sign.x * 0.1, fade);
       for (const beacon of beacons) {
         const pulse = 0.15 + 0.35 * (0.5 + 0.5 * Math.sin((Math.PI * 2 * sceneTime) / beacon.period + beacon.phase));
-        drawStreak(beacon.x, SURFACE_GLOW, pulse * 1.2, beacon.phase);
+        drawGlitter(beacon.x, SURFACE_GLOW, pulse * 1.2, beacon.phase, fade);
       }
+      // Lit ground-floor windows throw short, cool paths of their own.
+      for (const x of glintXs) drawGlitter(x, STREAK_COLOR, 0.22, x * 0.05, fade);
       ctx.restore();
     }
 
@@ -1434,16 +1707,18 @@ export function createRainEngine(
       ctx.fillRect(0, waterRest, width, 70);
     }
 
+    // The meniscus: quieter than it was — the reflections now say "water",
+    // so the line only has to catch the light, not draw the sea by itself.
     ctx.beginPath();
     ctx.moveTo(0, surfaceYs[0]);
     for (let i = 1; i < columnCount; i++) {
       ctx.lineTo(i * COLUMN_SPACING, surfaceYs[i]);
     }
-    ctx.strokeStyle = `rgba(${SURFACE_GLOW}, 0.08)`;
+    ctx.strokeStyle = `rgba(${SURFACE_GLOW}, 0.07)`;
     ctx.lineWidth = 3.5;
     ctx.stroke();
-    ctx.strokeStyle = `rgba(${SURFACE_GLOW}, 0.28)`;
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = `rgba(${SURFACE_GLOW}, 0.22)`;
+    ctx.lineWidth = 1.2;
     ctx.stroke();
 
     // Crest foam: a brighter dash wherever the surface tops out (slope flips
@@ -1460,19 +1735,6 @@ export function createRainEngine(
       ctx.lineTo(x + COLUMN_SPACING * 0.8, y + 0.5);
     }
     ctx.stroke();
-
-    ctx.lineWidth = 1;
-    for (const x of glintXs) {
-      const i = columnAt(x);
-      const displacement = surfaceYs[i] - waterRest;
-      const alpha = 0.06 + 0.1 * clamp01(0.5 + displacement / MAX_WAVE_HEIGHT);
-      const top = surfaceYs[i] + 2;
-      ctx.strokeStyle = `rgba(${STREAK_COLOR}, ${alpha})`;
-      ctx.beginPath();
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, top + 9 + Math.abs(displacement) * 0.5);
-      ctx.stroke();
-    }
   }
 
   function renderRings() {
@@ -1520,7 +1782,10 @@ export function createRainEngine(
     const rayLevel = clamp01((submerge - 0.55) / 0.45) * Math.max(0, 1 - depth / 0.55);
     const snowLevel = clamp01((submerge - 0.75) / 0.25);
     const glintLevel = clamp01((depth - 0.72) / 0.14);
-    if (rayLevel < 0.01 && snowLevel < 0.01 && glintLevel < 0.01 && bubbles.length === 0) return;
+    const causticLevel = clamp01((submerge - 0.5) / 0.4) * Math.max(0, 1 - depth / 0.35);
+    if (rayLevel < 0.01 && snowLevel < 0.01 && glintLevel < 0.01 && causticLevel < 0.01 && bubbles.length === 0) {
+      return;
+    }
 
     const clipTop = Math.max(0, surfaceScreenY);
     dctx.save();
@@ -1530,26 +1795,44 @@ export function createRainEngine(
       dctx.clip();
     }
 
-    if (rayLevel > 0.01) {
+    // Shimmer just under the surface: two copies of one caustic net sliding
+    // past each other. Only while there is still light to make it.
+    if (causticLevel > 0.01 && causticTile) {
+      const bandTop = Math.max(surfaceScreenY, 0);
+      const bandHeight = Math.min(height * 0.3, 230);
+      const tileWidth = bandHeight * 3;
+      const drift = staticMode ? 0 : sceneTime;
+      dctx.globalCompositeOperation = "lighter";
+      dctx.globalAlpha = CAUSTIC_ALPHA * causticLevel * 0.55;
+      drawTiled(dctx, causticTile, tileWidth, bandTop, bandHeight, drift * 9);
+      dctx.globalAlpha = CAUSTIC_ALPHA * causticLevel * 0.45;
+      drawTiled(dctx, causticTile, tileWidth * 1.3, bandTop, bandHeight * 1.15, tileWidth * 0.37 - drift * 6);
+      dctx.globalAlpha = 1;
+      dctx.globalCompositeOperation = "source-over";
+    }
+
+    // Light shafts: the baked soft-edged beam, placed with one affine each —
+    // scaled to the ray's width and the water's height, sheared to its lean.
+    if (rayLevel > 0.01 && raySprite) {
       dctx.globalCompositeOperation = "lighter";
       for (const ray of GOD_RAYS) {
         const sway = staticMode ? 0 : Math.sin((Math.PI * 2 * sceneTime) / ray.period + ray.phase) * 0.045;
         const topX = ray.x * width;
-        const bottomX = topX + (ray.tilt + sway) * height;
-        const topHalf = ray.width * width * 0.5;
-        const bottomHalf = topHalf * 2.6;
         const rayTop = Math.max(surfaceScreenY, -12);
-        const beam = dctx.createLinearGradient(0, rayTop, 0, height * 0.9);
-        beam.addColorStop(0, `rgba(${UNDER_LIGHT}, ${ray.peak * rayLevel})`);
-        beam.addColorStop(1, `rgba(${UNDER_LIGHT}, 0)`);
-        dctx.fillStyle = beam;
-        dctx.beginPath();
-        dctx.moveTo(topX - topHalf, rayTop);
-        dctx.lineTo(topX + topHalf, rayTop);
-        dctx.lineTo(bottomX + bottomHalf, height);
-        dctx.lineTo(bottomX - bottomHalf, height);
-        dctx.closePath();
-        dctx.fill();
+        const bottomWidth = (ray.width * width) / RAY_TOP_WIDTH_RATIO;
+        const lean = (ray.tilt + sway) * height;
+        dctx.save();
+        dctx.globalAlpha = Math.min(1, ray.peak * rayLevel * RAY_GAIN);
+        dctx.transform(
+          bottomWidth / raySprite.width,
+          0,
+          lean / raySprite.height,
+          (height - rayTop) / raySprite.height,
+          topX - bottomWidth / 2,
+          rayTop,
+        );
+        dctx.drawImage(raySprite, 0, 0);
+        dctx.restore();
       }
       dctx.globalCompositeOperation = "source-over";
     }
@@ -1567,6 +1850,15 @@ export function createRainEngine(
         }
         dctx.fill();
       }
+      // Out-of-focus motes near the lens.
+      dctx.fillStyle = `rgba(190, 212, 235, ${0.045 * alphaScale})`;
+      dctx.beginPath();
+      for (const mote of motes) {
+        const x = mote.x0 + Math.sin(sceneTime * 0.22 + mote.phase) * mote.drift;
+        dctx.moveTo(x + mote.r, mote.y);
+        dctx.arc(x, mote.y, mote.r, 0, Math.PI * 2);
+      }
+      dctx.fill();
     }
 
     if (!staticMode && bubbles.length > 0) {
@@ -1596,20 +1888,23 @@ export function createRainEngine(
     const surfaceScreenY = waterRest - scrollYCached;
 
     // Scene canvas: painted in its own document coordinates, no translate —
-    // the browser scrolls the element. Clipped to the live region so nothing
-    // ever bleeds into the once-painted deep column below; skipped entirely
-    // once the whole live region is above the viewport (only the static
-    // column is on screen, so repainting would be invisible work).
+    // the browser scrolls the element. Clipped to the rows near the viewport
+    // (never past the live region, so nothing bleeds into the once-painted
+    // deep column below); skipped entirely once the whole live region is
+    // above the viewport (only the static column is on screen, so repainting
+    // would be invisible work).
     if (scrollYCached < liveBottom + 40) {
+      const margin = height * PAINT_MARGIN;
+      const paintTop = paintEverything ? 0 : Math.max(0, scrollYCached - margin);
+      const paintBottom = paintEverything ? liveBottom : Math.min(liveBottom, scrollYCached + height + margin);
+      paintEverything = false;
       ctx.save();
       ctx.beginPath();
-      ctx.rect(0, 0, width, liveBottom);
+      ctx.rect(0, paintTop, width, paintBottom - paintTop);
       ctx.clip();
-      ctx.fillStyle = skyGradient;
-      ctx.fillRect(0, 0, width, height);
+      renderSky(staticMode);
       drawCityBands();
       renderCityOverlays(staticMode);
-      renderFog();
       renderDrops();
       renderWater();
       renderRings();
@@ -1644,7 +1939,6 @@ export function createRainEngine(
       stepWater();
       stepSplashes();
       stepScene();
-      fogPhase += SIM_STEP;
       accumulator -= SIM_STEP;
       steps++;
     }
@@ -1684,6 +1978,7 @@ export function createRainEngine(
     rings.length = 0;
     staticRenderedSubmerge = submerge;
     staticRenderedDepth = depth;
+    paintEverything = true;
     render(true);
   }
 

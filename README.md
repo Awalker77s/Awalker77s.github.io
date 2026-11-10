@@ -1,6 +1,6 @@
 # portfolio
 
-Alexander Walker's developer portfolio — a dark, rainy single page that submerges as you scroll. Everything atmospheric is hand-built: the rain, city, and water are a custom canvas engine (spring-column water surface, seeded skyline, parallax streaks), and the soundtrack is synthesized live in the Web Audio API — no animation libraries, no audio files.
+Alexander Walker's developer portfolio — a dark, rainy single page that submerges as you scroll. Everything atmospheric is hand-built: the rain, city, and water are a custom canvas engine (spring-column water surface, seeded skyline under a drifting procedural overcast, baked window bloom, a rippling sliced mirror of the city in the water), and the soundtrack is synthesized live in the Web Audio API — no animation libraries, no audio files.
 
 ## The descent
 
@@ -14,6 +14,8 @@ npm run dev
 ```
 
 Port 3000. Content facts live in `src/lib/content.ts` only — copy edits happen there, never inline in JSX.
+
+Every visit builds a new skyline. Add `?seed=<number>` to the URL to pin one (and its weather) — useful for reproducible screenshots.
 
 ## Verify
 
@@ -37,6 +39,7 @@ Push to `master` → `.github/workflows/deploy.yml` lints, builds, runs `npm run
 
 - `src/lib/content.ts` — every fact on the page, plus the section list the nav and headings share
 - `src/lib/rain/engine.ts` — canvas rain/city/water/descent engine
+- `src/lib/rain/textures.ts` — procedural textures baked once: clouds, mist, light shaft, caustics, bloom
 - `src/lib/rain/audio.ts` — two-bed depth-reactive WebAudio score + rain synth
 - `src/lib/scroll.ts` — the single smooth-scroll stage (camera tracks scrollY directly)
 - `src/lib/depth.ts` — the waterline constant, the depth stream, depth → metres/zone

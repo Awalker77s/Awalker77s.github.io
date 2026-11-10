@@ -235,6 +235,25 @@ console.log("desktop");
     expect(new Set(ys.map(Math.round)).size > 12, "glide was not dense small steps");
   });
 
+  await check("EP-SCROLL the scene is fully repainted when the reader returns from the deep", async () => {
+    // Only rows near the viewport are painted per frame; coming back up from
+    // the page bottom must never expose a row that was left unpainted.
+    await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForTimeout(900);
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.waitForTimeout(200);
+    const unpainted = await page.evaluate(() => {
+      const canvas = document.querySelector("canvas.scene-doc-canvas");
+      const context = canvas.getContext("2d");
+      let rows = 0;
+      for (let y = 0; y < canvas.height / 2; y += 6) {
+        if (context.getImageData(canvas.width >> 1, y, 1, 1).data[3] === 0) rows++;
+      }
+      return rows;
+    });
+    expect(unpainted === 0, `${unpainted} sampled rows of the scene were never painted`);
+  });
+
   await check("EP-PRINT paper palette, no weather, no half-faded blocks", async () => {
     await page.evaluate(() => document.getElementById("projects").scrollIntoView());
     await page.emulateMedia({ media: "print" });
@@ -512,6 +531,31 @@ console.log("reduced motion");
   });
 
   await context.close();
+}
+
+console.log("seeded skyline");
+{
+  // `?seed=` pins the city and its weather; with the rain off the scene is a
+  // pure function of the seed, so two loads must paint identical pixels.
+  const stillFrame = async (seed) => {
+    const { context, page } = await open(desktop, {
+      path: `?seed=${seed}`,
+      initScript: () => {
+        localStorage.setItem("rain-sound", "off");
+        localStorage.setItem("rain-motion-v2", "off");
+      },
+    });
+    await page.waitForSelector("canvas.scene-doc-canvas");
+    await page.waitForTimeout(900);
+    const frame = await sceneFrame(page);
+    await context.close();
+    return frame;
+  };
+  await check("EP-CITY ?seed= reproduces the skyline exactly; another seed builds another city", async () => {
+    const first = await stillFrame(7);
+    expect(first === (await stillFrame(7)), "same seed painted different pixels");
+    expect(first !== (await stillFrame(8)), "different seeds painted the same city");
+  });
 }
 
 console.log("not found");
